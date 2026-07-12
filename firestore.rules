@@ -1,0 +1,12 @@
+rules_version = '2';
+
+// The Next.js server is the only client of Firestore — it uses the
+// Admin SDK (firebase-admin), which bypasses these rules entirely.
+// No browser code talks to Firestore directly, so deny everything else.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

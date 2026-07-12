@@ -1,0 +1,37 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "leaves",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "employeeEmail", "order": "ASCENDING" },
+        { "fieldPath": "appliedOn", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "leaves",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "appliedOn", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "leaveComments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "leaveId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "internalNotes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "leaveId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
