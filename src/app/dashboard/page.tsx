@@ -129,29 +129,55 @@ export default function Dashboard() {
         <h2 className="text-lg font-semibold text-gray-800 mb-4">
           Leave Balance ({new Date().getFullYear()})
         </h2>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 mb-10">
-          {availableTypes
-            .filter((t) => t !== "wfh" && t !== "unpaid")
-            .map((type, i) => (
-              <div
-                key={type}
-                className={`bg-white rounded-2xl border border-gray-100 border-l-4 ${
-                  CARD_ACCENTS[i % CARD_ACCENTS.length]
-                } p-5 shadow-sm`}
-              >
-                <p className="text-sm font-medium text-gray-500 mb-2">
-                  {TYPE_LABELS[type] || type}
-                </p>
-                <p className="text-3xl font-bold text-gray-900">
-                  {balance.remaining[type] ?? 0}
-                </p>
-                <p className="text-xs text-gray-400 mt-1">
-                  {balance.used[type] ?? 0} used of{" "}
-                  {balance.entitled[type] ?? 0}
-                </p>
+        {(() => {
+          const excluded = ["wfh", "unpaid", "compensatory"];
+          const primaryTypes = ["sick", "casual", "annual"].filter((t) =>
+            availableTypes.includes(t)
+          );
+          const secondaryTypes = availableTypes.filter(
+            (t) => !primaryTypes.includes(t) && !excluded.includes(t)
+          );
+
+          const renderCard = (type: string, i: number) => (
+            <div
+              key={type}
+              className={`bg-white rounded-2xl border border-gray-100 border-l-4 ${
+                CARD_ACCENTS[i % CARD_ACCENTS.length]
+              } p-5 shadow-sm`}
+            >
+              <p className="text-sm font-medium text-gray-500 mb-2">
+                {TYPE_LABELS[type] || type}
+              </p>
+              <p className="text-3xl font-bold text-gray-900">
+                {balance.remaining[type] ?? 0}
+              </p>
+              <p className="text-xs text-gray-400 mt-1">
+                {balance.used[type] ?? 0} used of {balance.entitled[type] ?? 0}
+              </p>
+            </div>
+          );
+
+          return (
+            <div className="mb-10 space-y-6">
+              <div>
+                <h3 className="text-lg font-bold text-gray-500 mb-3">
+                  General Leave
+                </h3>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                  {primaryTypes.map((type, i) => renderCard(type, i))}
+                </div>
               </div>
-            ))}
-        </div>
+              <div>
+                <h3 className="text-lg font-bold text-gray-500 mb-3">
+                  Special Leave
+                </h3>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                  {secondaryTypes.map((type, i) => renderCard(type, i))}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Recent requests */}
         <div className="flex items-center justify-between mb-4">
