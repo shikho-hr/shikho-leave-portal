@@ -8,6 +8,7 @@ import {
   HALF_DAY_ELIGIBLE_TYPES,
   calculateLeaveDays,
   REASON_OPTIONAL_TYPES,
+  MIN_REASON_LENGTH,
 } from "@/lib/leave-calculator";
 import { LeaveType } from "@/lib/types";
 
@@ -45,6 +46,9 @@ export default function ApplyLeave() {
 
   const isHalfDayEligible = HALF_DAY_ELIGIBLE_TYPES.includes(
     form.leaveType as (typeof HALF_DAY_ELIGIBLE_TYPES)[number]
+  );
+  const isReasonRequired = !REASON_OPTIONAL_TYPES.includes(
+    form.leaveType as LeaveType
   );
 
   useEffect(() => {
@@ -89,6 +93,13 @@ export default function ApplyLeave() {
     if (computedDays <= 0) {
       setError(
         "The selected date(s) fall on a weekend or holiday — there are no leave days to apply for."
+      );
+      return;
+    }
+
+    if (isReasonRequired && form.reason.trim().length < MIN_REASON_LENGTH) {
+      setError(
+        `Reason must be at least ${MIN_REASON_LENGTH} characters (currently ${form.reason.trim().length}).`
       );
       return;
     }
@@ -267,7 +278,7 @@ export default function ApplyLeave() {
               )}
             </label>
             <textarea
-              required={!REASON_OPTIONAL_TYPES.includes(form.leaveType as LeaveType)}
+              required={isReasonRequired}
               rows={3}
               value={form.reason}
               onChange={(e) =>
@@ -276,6 +287,18 @@ export default function ApplyLeave() {
               placeholder="Provide a reason for your leave request"
               className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-gray-50/50"
             />
+            {isReasonRequired && (
+              <p
+                className={`text-xs mt-1 ${
+                  form.reason.trim().length < MIN_REASON_LENGTH
+                    ? "text-gray-400"
+                    : "text-green-600"
+                }`}
+              >
+                {form.reason.trim().length} / {MIN_REASON_LENGTH} characters
+                minimum
+              </p>
+            )}
           </div>
 
           <button

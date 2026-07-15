@@ -18,6 +18,7 @@ import {
   validateLeaveRequest,
   calculateLeaveDays,
   REASON_OPTIONAL_TYPES,
+  MIN_REASON_LENGTH,
 } from "@/lib/leave-calculator";
 import { LeaveType, HalfDayPeriod } from "@/lib/types";
 
@@ -75,6 +76,16 @@ export async function POST(req: NextRequest) {
     ) {
       return NextResponse.json(
         { error: "All fields are required" },
+        { status: 400 }
+      );
+    }
+
+    if (
+      !REASON_OPTIONAL_TYPES.includes(leaveType as LeaveType) &&
+      (reason as string).trim().length < MIN_REASON_LENGTH
+    ) {
+      return NextResponse.json(
+        { error: `Reason must be at least ${MIN_REASON_LENGTH} characters.` },
         { status: 400 }
       );
     }

@@ -19,7 +19,7 @@ export default function RootLayout({
       <body>
         {isStaging && (
           <div className="bg-sunrise text-white text-center text-sm font-semibold py-1.5 px-4">
-            Staging — leave activity here is for testing only and does not affect real balances
+            This portal is for testing purpose only. Leave activities here will not effect balance
           </div>
         )}
         <Providers>{children}</Providers>

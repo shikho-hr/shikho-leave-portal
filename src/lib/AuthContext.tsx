@@ -116,7 +116,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const profile = await fetchProfile();
       setUser(profile);
       setStatus(profile ? "authenticated" : "unauthenticated");
-    } catch {
+    } catch (err) {
+      console.error("Sign-in error:", err);
       setError("Sign-in was cancelled or failed. Please try again.");
       setStatus("unauthenticated");
     }

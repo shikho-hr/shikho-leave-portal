@@ -22,6 +22,7 @@ export const HALF_DAY_ELIGIBLE_TYPES: LeaveType[] = [
   "sick",
   "casual",
   "annual",
+  "wfh",
 ];
 
 // Reason is optional (but the field stays visible) for these types.
@@ -30,6 +31,9 @@ export const REASON_OPTIONAL_TYPES: LeaveType[] = [
   "paternity",
   "ladies_wfh",
 ];
+
+// Applies only where reason is already mandatory (i.e. not in REASON_OPTIONAL_TYPES).
+export const MIN_REASON_LENGTH = 60;
 
 export const MATERNITY_PATERNITY_LIFETIME_CAP = 2;
 
@@ -427,6 +431,14 @@ export function validateLeaveRequest(
     return {
       valid: false,
       error: "Casual leave is restricted to a maximum of 2 days at a stretch.",
+    };
+  }
+
+  // Compassionate leave max 3 days at a stretch
+  if (leaveType === "compassionate" && days > 3) {
+    return {
+      valid: false,
+      error: "Compassionate leave is restricted to a maximum of 3 days at a stretch.",
     };
   }
 
