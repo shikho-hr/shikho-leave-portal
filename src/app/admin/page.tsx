@@ -4,6 +4,7 @@ import { useAuth } from "@/lib/AuthContext";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import Navbar from "@/components/Navbar";
+import { formatDate } from "@/lib/leave-calculator";
 
 interface EmployeeWithBalance {
   id: string;
@@ -542,7 +543,7 @@ export default function AdminDashboard() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-gray-600">
-                      {l.startDate} — {l.endDate}
+                      {formatDate(l.startDate)} — {formatDate(l.endDate)}
                     </td>
                     <td className="px-4 py-3">{l.days}</td>
                     <td className="px-4 py-3">
@@ -554,7 +555,9 @@ export default function AdminDashboard() {
                         {STATUS_LABELS[l.status] || l.status}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-gray-500">{l.appliedOn}</td>
+                    <td className="px-4 py-3 text-gray-500">
+                      {formatDate(l.appliedOn)}
+                    </td>
                     <td className="px-4 py-3 text-gray-500">
                       {l.reviewedBy || "—"}
                     </td>

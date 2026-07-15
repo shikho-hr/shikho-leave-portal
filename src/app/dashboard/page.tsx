@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Fragment, useEffect, useState } from "react";
 import Navbar from "@/components/Navbar";
 import CommentThread from "@/components/CommentThread";
+import { formatDate } from "@/lib/leave-calculator";
 
 interface BalanceData {
   balance: {
@@ -237,7 +238,8 @@ export default function Dashboard() {
                           )}
                         </td>
                         <td className="px-4 py-3 text-gray-600">
-                          {leave.startDate} — {leave.endDate}
+                          {formatDate(leave.startDate)} —{" "}
+                          {formatDate(leave.endDate)}
                         </td>
                         <td className="px-4 py-3">{leave.days}</td>
                         <td className="px-4 py-3">
@@ -250,7 +252,7 @@ export default function Dashboard() {
                           </span>
                         </td>
                         <td className="px-4 py-3 text-gray-500">
-                          {leave.appliedOn}
+                          {formatDate(leave.appliedOn)}
                         </td>
                       </tr>
                       <tr>

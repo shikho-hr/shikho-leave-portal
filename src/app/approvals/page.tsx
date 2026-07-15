@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import Navbar from "@/components/Navbar";
 import CommentThread from "@/components/CommentThread";
 import InternalNoteThread from "@/components/InternalNoteThread";
+import { formatDate } from "@/lib/leave-calculator";
 
 interface PendingLeave {
   id: string;
@@ -227,7 +228,7 @@ export default function Approvals() {
                       </span>
                     )}
                     <span className="text-xs text-gray-400 bg-gray-50 px-2 py-1 rounded-lg">
-                      Applied {leave.appliedOn}
+                      Applied {formatDate(leave.appliedOn)}
                     </span>
                   </div>
                 </div>
@@ -251,7 +252,8 @@ export default function Approvals() {
                       Dates
                     </p>
                     <p className="font-medium mt-0.5">
-                      {leave.startDate} — {leave.endDate}
+                      {formatDate(leave.startDate)} —{" "}
+                      {formatDate(leave.endDate)}
                     </p>
                   </div>
                   <div>

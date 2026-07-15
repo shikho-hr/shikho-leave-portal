@@ -85,7 +85,7 @@ export async function POST(req: NextRequest) {
       (reason as string).trim().length < MIN_REASON_LENGTH
     ) {
       return NextResponse.json(
-        { error: `Reason must be at least ${MIN_REASON_LENGTH} characters.` },
+        { error: "Please elaborate the reason properly" },
         { status: 400 }
       );
     }

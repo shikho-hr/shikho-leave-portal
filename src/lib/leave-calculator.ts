@@ -37,6 +37,11 @@ export const MIN_REASON_LENGTH = 60;
 
 export const MATERNITY_PATERNITY_LIFETIME_CAP = 2;
 
+// Display format for dates shown anywhere in the portal, e.g. "15 Jul, 2026".
+export function formatDate(dateStr: string): string {
+  return format(parseISO(dateStr), "d MMM, yyyy");
+}
+
 // Company weekend is Friday/Saturday.
 // Note: compare using local-time yyyy-MM-dd (via date-fns `format`), not
 // `date.toISOString()` — toISOString() converts to UTC, which silently

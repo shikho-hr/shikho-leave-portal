@@ -98,9 +98,7 @@ export default function ApplyLeave() {
     }
 
     if (isReasonRequired && form.reason.trim().length < MIN_REASON_LENGTH) {
-      setError(
-        `Reason must be at least ${MIN_REASON_LENGTH} characters (currently ${form.reason.trim().length}).`
-      );
+      setError("Please elaborate the reason properly");
       return;
     }
 
@@ -287,18 +285,6 @@ export default function ApplyLeave() {
               placeholder="Provide a reason for your leave request"
               className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-gray-50/50"
             />
-            {isReasonRequired && (
-              <p
-                className={`text-xs mt-1 ${
-                  form.reason.trim().length < MIN_REASON_LENGTH
-                    ? "text-gray-400"
-                    : "text-green-600"
-                }`}
-              >
-                {form.reason.trim().length} / {MIN_REASON_LENGTH} characters
-                minimum
-              </p>
-            )}
           </div>
 
           <button
