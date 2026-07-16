@@ -272,6 +272,59 @@ export async function getApprovedLeavesByEmployee(
   return snap.docs.map((d) => d.data() as LeaveRequest);
 }
 
+// Firestore's "in" operator caps at 30 values — chunk larger lists (e.g. a
+// manager with a big team) and merge results, so nobody silently drops off.
+function chunk30(items: string[]): string[][] {
+  const chunks: string[][] = [];
+  for (let i = 0; i < items.length; i += 30) chunks.push(items.slice(i, i + 30));
+  return chunks;
+}
+
+// Leaves for a specific set of employees (e.g. a manager's direct reportees)
+// — used by the Team Details page's "All Requests" tab for managers, so
+// they never trigger a full company-wide leaves scan.
+export async function getLeavesByEmployees(
+  emails: string[]
+): Promise<LeaveRequest[]> {
+  if (emails.length === 0) return [];
+  const results = await Promise.all(
+    chunk30(emails).map((c) => leavesCol.where("employeeEmail", "in", c).get())
+  );
+  return results
+    .flatMap((snap) => snap.docs.map((d) => d.data() as LeaveRequest))
+    .sort(
+      (a, b) => new Date(b.appliedOn).getTime() - new Date(a.appliedOn).getTime()
+    );
+  // Sorted in memory rather than via .orderBy() — combining "in" with an
+  // orderBy on a different field would need a new composite index; this
+  // avoids that entirely.
+}
+
+// Same idea as getAllApprovedLeavesGroupedByEmployee(), but scoped to a
+// specific set of employees — used for a manager's team balance instead of
+// the whole company's approved leaves.
+export async function getApprovedLeavesGroupedByEmployees(
+  emails: string[]
+): Promise<Map<string, LeaveRequest[]>> {
+  if (emails.length === 0) return new Map();
+  const results = await Promise.all(
+    chunk30(emails).map((c) =>
+      leavesCol.where("employeeEmail", "in", c).where("status", "==", "approved").get()
+    )
+  );
+  const grouped = new Map<string, LeaveRequest[]>();
+  results.forEach((snap) =>
+    snap.docs.forEach((d) => {
+      const leave = d.data() as LeaveRequest;
+      grouped.set(leave.employeeEmail, [
+        ...(grouped.get(leave.employeeEmail) || []),
+        leave,
+      ]);
+    })
+  );
+  return grouped;
+}
+
 // One query for every approved leave company-wide, grouped by employee —
 // used by the admin balances table instead of querying per employee (which
 // costs a read for every employee even ones with zero approved leaves).

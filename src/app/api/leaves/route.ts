@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import {
   getLeavesByEmployee,
+  getLeavesByEmployees,
+  getEmployeesByManager,
   getPendingLeavesForManager,
   getLeaveRequests,
   createLeaveRequest,
@@ -43,6 +45,12 @@ export async function GET(req: NextRequest) {
 
     if (view === "all" && user.role === "admin") {
       const leaves = await getLeaveRequests();
+      return NextResponse.json(leaves);
+    }
+
+    if (view === "all" && user.role === "manager") {
+      const reportees = await getEmployeesByManager(user.email);
+      const leaves = await getLeavesByEmployees(reportees.map((e) => e.email));
       return NextResponse.json(leaves);
     }
 

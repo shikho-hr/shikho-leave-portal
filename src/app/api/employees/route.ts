@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import {
   getEmployees,
+  getEmployeesByManager,
   getAllApprovedLeavesGroupedByEmployee,
+  getApprovedLeavesGroupedByEmployees,
   getAllOpeningBalances,
   getAllBalanceSnapshots,
 } from "@/lib/db";
@@ -13,18 +15,23 @@ export async function GET() {
   if (!user)
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  if (user.role !== "admin") {
+  if (user.role !== "admin" && user.role !== "manager") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   try {
-    const [employees, approvedByEmail, openingBalances, snapshots] =
-      await Promise.all([
-        getEmployees(),
-        getAllApprovedLeavesGroupedByEmployee(),
-        getAllOpeningBalances(),
-        getAllBalanceSnapshots(),
-      ]);
+    const isAdmin = user.role === "admin";
+    const employees = isAdmin
+      ? await getEmployees()
+      : await getEmployeesByManager(user.email);
+
+    const [approvedByEmail, openingBalances, snapshots] = await Promise.all([
+      isAdmin
+        ? getAllApprovedLeavesGroupedByEmployee()
+        : getApprovedLeavesGroupedByEmployees(employees.map((e) => e.email)),
+      getAllOpeningBalances(),
+      getAllBalanceSnapshots(),
+    ]);
 
     const enriched = employees.map((emp) => {
       const approved = approvedByEmail.get(emp.email) || [];

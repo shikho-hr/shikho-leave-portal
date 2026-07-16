@@ -14,7 +14,9 @@ export default function Navbar() {
     ...(role === "manager" || role === "admin"
       ? [{ href: "/approvals", label: "Approvals" }]
       : []),
-    ...(role === "admin" ? [{ href: "/admin", label: "Admin" }] : []),
+    ...(role === "manager" || role === "admin"
+      ? [{ href: "/admin", label: "Team Details" }]
+      : []),
   ];
 
   return (

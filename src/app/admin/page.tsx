@@ -108,7 +108,7 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     if (status === "unauthenticated") router.replace("/");
-    if (user && user.role !== "admin") {
+    if (user && user.role !== "admin" && user.role !== "manager") {
       router.replace("/dashboard");
     }
   }, [status, user, router]);
@@ -149,7 +149,8 @@ export default function AdminDashboard() {
   };
 
   useEffect(() => {
-    if (user && user.role === "admin") fetchAdminData();
+    if (user && (user.role === "admin" || user.role === "manager"))
+      fetchAdminData();
   }, [user]);
 
   const handleSync = async () => {
@@ -233,30 +234,30 @@ export default function AdminDashboard() {
       <Navbar />
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
-          <h1 className="text-2xl font-bold text-gray-900">
-            Admin Dashboard
-          </h1>
-          <div className="flex items-center gap-2">
-            <a
-              href="/api/admin/export?format=csv"
-              className="bg-white border border-gray-200 text-gray-700 text-sm font-semibold px-4 py-2 rounded-xl hover:border-indigo-300 transition-colors shadow-sm"
-            >
-              Export CSV
-            </a>
-            <a
-              href="/api/admin/export?format=xlsx"
-              className="bg-white border border-gray-200 text-gray-700 text-sm font-semibold px-4 py-2 rounded-xl hover:border-indigo-300 transition-colors shadow-sm"
-            >
-              Export XLSX
-            </a>
-            <button
-              onClick={handleSync}
-              disabled={syncing}
-              className="bg-indigo-600 text-white text-sm font-semibold px-4 py-2 rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors shadow-sm"
-            >
-              {syncing ? "Syncing..." : "Sync from Sheet"}
-            </button>
-          </div>
+          <h1 className="text-2xl font-bold text-gray-900">Team Details</h1>
+          {user?.role === "admin" && (
+            <div className="flex items-center gap-2">
+              <a
+                href="/api/admin/export?format=csv"
+                className="bg-white border border-gray-200 text-gray-700 text-sm font-semibold px-4 py-2 rounded-xl hover:border-indigo-300 transition-colors shadow-sm"
+              >
+                Export CSV
+              </a>
+              <a
+                href="/api/admin/export?format=xlsx"
+                className="bg-white border border-gray-200 text-gray-700 text-sm font-semibold px-4 py-2 rounded-xl hover:border-indigo-300 transition-colors shadow-sm"
+              >
+                Export XLSX
+              </a>
+              <button
+                onClick={handleSync}
+                disabled={syncing}
+                className="bg-indigo-600 text-white text-sm font-semibold px-4 py-2 rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors shadow-sm"
+              >
+                {syncing ? "Syncing..." : "Sync from Sheet"}
+              </button>
+            </div>
+          )}
         </div>
 
         {syncResult && (
@@ -562,7 +563,8 @@ export default function AdminDashboard() {
                       </p>
                     </td>
                     <td className="px-4 py-3">
-                      {TYPE_EDITABLE_STATUSES.includes(l.status) ? (
+                      {TYPE_EDITABLE_STATUSES.includes(l.status) &&
+                      user?.role === "admin" ? (
                         <select
                           value={l.leaveType}
                           disabled={changingTypeId === l.id}
