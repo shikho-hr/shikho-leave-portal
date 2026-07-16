@@ -28,6 +28,16 @@ const TYPE_LABELS: Record<string, string> = {
 
 type HalfDayChoice = "" | "first_half" | "second_half";
 
+// Dates must be picked via the calendar UI, not typed — avoids mm/dd vs
+// dd/mm ambiguity from manual keyboard entry. Tab is still allowed through
+// for keyboard focus navigation.
+const blockManualDateEntry = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  if (e.key !== "Tab") e.preventDefault();
+};
+const blockDatePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+  e.preventDefault();
+};
+
 export default function ApplyLeave() {
   const { user, status } = useAuth();
   const router = useRouter();
@@ -238,6 +248,8 @@ export default function ApplyLeave() {
                 onChange={(e) =>
                   setForm((f) => ({ ...f, startDate: e.target.value }))
                 }
+                onKeyDown={blockManualDateEntry}
+                onPaste={blockDatePaste}
                 className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-gray-50/50"
               />
             </div>
@@ -254,6 +266,8 @@ export default function ApplyLeave() {
                   onChange={(e) =>
                     setForm((f) => ({ ...f, endDate: e.target.value }))
                   }
+                  onKeyDown={blockManualDateEntry}
+                  onPaste={blockDatePaste}
                   className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-gray-50/50"
                 />
               </div>
@@ -277,6 +291,8 @@ export default function ApplyLeave() {
                       extraWorkStartDate: e.target.value,
                     }))
                   }
+                  onKeyDown={blockManualDateEntry}
+                  onPaste={blockDatePaste}
                   className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-gray-50/50"
                 />
               </div>
@@ -295,6 +311,8 @@ export default function ApplyLeave() {
                       extraWorkEndDate: e.target.value,
                     }))
                   }
+                  onKeyDown={blockManualDateEntry}
+                  onPaste={blockDatePaste}
                   className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-gray-50/50"
                 />
               </div>

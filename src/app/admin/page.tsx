@@ -71,6 +71,16 @@ const STATUS_LABELS: Record<string, string> = {
   rejected: "Rejected",
 };
 
+// Dates must be picked via the calendar UI, not typed — avoids mm/dd vs
+// dd/mm ambiguity from manual keyboard entry. Tab is still allowed through
+// for keyboard focus navigation.
+const blockManualDateEntry = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  if (e.key !== "Tab") e.preventDefault();
+};
+const blockDatePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+  e.preventDefault();
+};
+
 export default function AdminDashboard() {
   const { user, status } = useAuth();
   const router = useRouter();
@@ -414,6 +424,8 @@ export default function AdminDashboard() {
                 type="date"
                 value={filterDateFrom}
                 onChange={(e) => setFilterDateFrom(e.target.value)}
+                onKeyDown={blockManualDateEntry}
+                onPaste={blockDatePaste}
                 className="border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white"
                 aria-label="On or after"
               />
@@ -422,6 +434,8 @@ export default function AdminDashboard() {
                 type="date"
                 value={filterDateTo}
                 onChange={(e) => setFilterDateTo(e.target.value)}
+                onKeyDown={blockManualDateEntry}
+                onPaste={blockDatePaste}
                 className="border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white"
                 aria-label="On or before"
               />
