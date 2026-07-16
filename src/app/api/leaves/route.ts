@@ -49,7 +49,9 @@ export async function GET(req: NextRequest) {
     }
 
     if (view === "all" && user.role === "manager") {
-      const reportees = await getEmployeesByManager(user.email);
+      const reportees = (await getEmployeesByManager(user.email)).filter(
+        (e) => e.status === "active"
+      );
       const leaves = await getLeavesByEmployees(reportees.map((e) => e.email));
       return NextResponse.json(leaves);
     }

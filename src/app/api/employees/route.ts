@@ -21,9 +21,13 @@ export async function GET() {
 
   try {
     const isAdmin = user.role === "admin";
+    // Managers only see their active reportees — Admin still sees everyone,
+    // active or inactive, unchanged.
     const employees = isAdmin
       ? await getEmployees()
-      : await getEmployeesByManager(user.email);
+      : (await getEmployeesByManager(user.email)).filter(
+          (e) => e.status === "active"
+        );
 
     const [approvedByEmail, openingBalances, snapshots] = await Promise.all([
       isAdmin
