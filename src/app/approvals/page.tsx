@@ -17,6 +17,8 @@ interface PendingLeave {
   endDate: string;
   days: number;
   halfDayPeriod?: "first_half" | "second_half";
+  extraWorkStartDate?: string;
+  extraWorkEndDate?: string;
   reason: string;
   status: string;
   appliedOn: string;
@@ -254,6 +256,14 @@ export default function Approvals() {
                     <p className="font-medium mt-0.5">
                       {formatDate(leave.startDate)} —{" "}
                       {formatDate(leave.endDate)}
+                      {leave.leaveType === "compensatory" &&
+                        leave.extraWorkStartDate &&
+                        leave.extraWorkEndDate && (
+                          <span className="block text-xs font-normal text-gray-400">
+                            Worked: {formatDate(leave.extraWorkStartDate)} –{" "}
+                            {formatDate(leave.extraWorkEndDate)}
+                          </span>
+                        )}
                     </p>
                   </div>
                   <div>

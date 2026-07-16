@@ -29,6 +29,8 @@ interface LeaveRow {
   status: string;
   appliedOn: string;
   reviewedBy: string;
+  extraWorkStartDate?: string;
+  extraWorkEndDate?: string;
 }
 
 const TYPE_LABELS: Record<string, string> = {
@@ -79,6 +81,8 @@ export default function AdminDashboard() {
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
   const [filterLeaveType, setFilterLeaveType] = useState("all");
+  const [filterDateFrom, setFilterDateFrom] = useState("");
+  const [filterDateTo, setFilterDateTo] = useState("");
   const [filterDept, setFilterDept] = useState("all");
   const [filterEmpStatus, setFilterEmpStatus] = useState("all");
   const [syncing, setSyncing] = useState(false);
@@ -204,6 +208,8 @@ export default function AdminDashboard() {
       (l) =>
         (filterStatus === "all" || l.status === filterStatus) &&
         (filterLeaveType === "all" || l.leaveType === filterLeaveType) &&
+        (!filterDateFrom || l.endDate >= filterDateFrom) &&
+        (!filterDateTo || l.startDate <= filterDateTo) &&
         (l.employeeName.toLowerCase().includes(search.toLowerCase()) ||
           l.employeeEmail.toLowerCase().includes(search.toLowerCase()))
     )
@@ -402,6 +408,25 @@ export default function AdminDashboard() {
               ))}
             </select>
           )}
+          {tab === "requests" && (
+            <div className="flex items-center gap-2">
+              <input
+                type="date"
+                value={filterDateFrom}
+                onChange={(e) => setFilterDateFrom(e.target.value)}
+                className="border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white"
+                aria-label="On or after"
+              />
+              <span className="text-gray-400 text-sm">to</span>
+              <input
+                type="date"
+                value={filterDateTo}
+                onChange={(e) => setFilterDateTo(e.target.value)}
+                className="border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white"
+                aria-label="On or before"
+              />
+            </div>
+          )}
         </div>
 
         {tab === "requests" && (
@@ -544,6 +569,14 @@ export default function AdminDashboard() {
                     </td>
                     <td className="px-4 py-3 text-gray-600">
                       {formatDate(l.startDate)} — {formatDate(l.endDate)}
+                      {l.leaveType === "compensatory" &&
+                        l.extraWorkStartDate &&
+                        l.extraWorkEndDate && (
+                          <span className="block text-xs font-normal text-gray-400">
+                            Worked: {formatDate(l.extraWorkStartDate)} –{" "}
+                            {formatDate(l.extraWorkEndDate)}
+                          </span>
+                        )}
                     </td>
                     <td className="px-4 py-3">{l.days}</td>
                     <td className="px-4 py-3">

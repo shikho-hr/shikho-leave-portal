@@ -1,5 +1,6 @@
 import {
   Employee,
+  EmployeeType,
   LeaveRequest,
   LeaveBalance,
   BalanceInfo,
@@ -36,6 +37,20 @@ export const REASON_OPTIONAL_TYPES: LeaveType[] = [
 export const MIN_REASON_LENGTH = 60;
 
 export const MATERNITY_PATERNITY_LIFETIME_CAP = 2;
+export const MARRIAGE_MAX_DAYS = 7;
+export const PATERNITY_MAX_DAYS = 14;
+export const MATERNITY_MAX_DAYS = 180;
+
+// Whether a leave only needs Manager approval, skipping HR entirely — true
+// for tele-sales employees (any leave type), or Monthly WFH for Ladies
+// (any employee type). Shared between the approval-workflow route and the
+// Dashboard's status display so both agree on the same rule.
+export function isSingleStageApproval(
+  employeeType: EmployeeType,
+  leaveType: LeaveType
+): boolean {
+  return employeeType !== "non-tele-sales" || leaveType === "ladies_wfh";
+}
 
 // Display format for dates shown anywhere in the portal, e.g. "15 Jul, 2026".
 export function formatDate(dateStr: string): string {
@@ -203,7 +218,7 @@ function nonTeleSalesEntitlement(
     casual: casualEntitled,
     annual: annualEntitled,
     marriage: 7,
-    maternity: employee.gender === "female" ? 182 : 0, // 26 weeks
+    maternity: employee.gender === "female" ? 180 : 0, // ~6 months
     paternity: employee.gender === "male" ? 14 : 0,
     // 1/month ceiling; the real gate is hasUsedLadiesWfhThisMonth(), not this balance.
     ladies_wfh: employee.gender === "female" ? 12 : 0,
@@ -319,6 +334,24 @@ export function calculateBalance(
     });
   }
 
+  // Monthly WFH for Ladies is a flat "1 per calendar month" allowance, not a
+  // yearly-accumulating total — override the generic entitled/used here so
+  // every consumer of this function (dashboard cards, admin balances,
+  // export, and the generic remaining-balance check below) shows/uses the
+  // same corrected number instead of a misleading running total.
+  if (employee.gender === "female") {
+    const usedThisMonth = approvedLeaves.some((l) => {
+      if (l.leaveType !== "ladies_wfh") return false;
+      const start = parseISO(l.startDate);
+      return (
+        start.getFullYear() === asOfDate.getFullYear() &&
+        start.getMonth() === asOfDate.getMonth()
+      );
+    });
+    entitled.ladies_wfh = 1;
+    used.ladies_wfh = usedThisMonth ? 1 : 0;
+  }
+
   const remaining: LeaveBalance = {
     sick: Math.max(entitled.sick - used.sick, 0),
     casual: Math.max(entitled.casual - used.casual, 0),
@@ -344,9 +377,31 @@ export function validateLeaveRequest(
   leaveType: LeaveType,
   days: number,
   halfDayPeriod?: HalfDayPeriod,
-  existingLeaves: LeaveRequest[] = []
+  existingLeaves: LeaveRequest[] = [],
+  extraWorkDates?: { startDate?: string; endDate?: string }
 ): { valid: boolean; error?: string } {
   const onProbation = isOnProbation(employee, new Date());
+
+  // Employees can never self-select Unpaid Leave — only HR/Admin can put a
+  // request into this bucket, via the separate admin reclassification path
+  // (which doesn't call this function at all).
+  if (leaveType === "unpaid") {
+    return {
+      valid: false,
+      error: "Unpaid leave requires explicit approval — please contact HR.",
+    };
+  }
+
+  // Compensatory Off requires recording which extra day(s) were worked
+  if (
+    leaveType === "compensatory" &&
+    (!extraWorkDates?.startDate || !extraWorkDates?.endDate)
+  ) {
+    return {
+      valid: false,
+      error: "Please specify the date(s) you worked extra for this compensatory off.",
+    };
+  }
 
   // Half-day is only meaningful for sick/casual/annual
   if (halfDayPeriod && !HALF_DAY_ELIGIBLE_TYPES.includes(leaveType)) {
@@ -381,6 +436,20 @@ export function validateLeaveRequest(
       error: `${
         leaveType === "maternity" ? "Maternity" : "Paternity"
       } leave can only be availed ${MATERNITY_PATERNITY_LIFETIME_CAP} times during employment.`,
+    };
+  }
+
+  // Maternity/paternity max days per request
+  if (leaveType === "maternity" && days > MATERNITY_MAX_DAYS) {
+    return {
+      valid: false,
+      error: `Maternity leave is restricted to a maximum of ${MATERNITY_MAX_DAYS} days.`,
+    };
+  }
+  if (leaveType === "paternity" && days > PATERNITY_MAX_DAYS) {
+    return {
+      valid: false,
+      error: `Paternity leave is restricted to a maximum of ${PATERNITY_MAX_DAYS} days.`,
     };
   }
 
@@ -424,6 +493,14 @@ export function validateLeaveRequest(
     return {
       valid: false,
       error: "Marriage leave requires completion of probation period.",
+    };
+  }
+
+  // Marriage leave max days per request
+  if (leaveType === "marriage" && days > MARRIAGE_MAX_DAYS) {
+    return {
+      valid: false,
+      error: `Marriage leave is restricted to a maximum of ${MARRIAGE_MAX_DAYS} days.`,
     };
   }
 
@@ -479,7 +556,7 @@ export function getAvailableLeaveTypes(
     return [];
   }
   if (employee.contractType !== "full-time") {
-    return ["sick", "casual", "unpaid"];
+    return ["sick", "casual"];
   }
 
   return [
@@ -493,7 +570,6 @@ export function getAvailableLeaveTypes(
     "compassionate",
     "compensatory",
     "wfh",
-    "unpaid",
   ].filter((type) => {
     if (type === "maternity") {
       return (

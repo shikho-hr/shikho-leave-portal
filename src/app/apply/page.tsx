@@ -39,6 +39,8 @@ export default function ApplyLeave() {
     endDate: "",
     reason: "",
     halfDayPeriod: "" as HalfDayChoice,
+    extraWorkStartDate: "",
+    extraWorkEndDate: "",
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -50,6 +52,7 @@ export default function ApplyLeave() {
   const isReasonRequired = !REASON_OPTIONAL_TYPES.includes(
     form.leaveType as LeaveType
   );
+  const isCompensatory = form.leaveType === "compensatory";
 
   useEffect(() => {
     if (status === "unauthenticated") router.replace("/");
@@ -112,6 +115,10 @@ export default function ApplyLeave() {
           startDate: form.startDate,
           endDate: effectiveEndDate,
           halfDayPeriod: form.halfDayPeriod || undefined,
+          extraWorkStartDate: isCompensatory
+            ? form.extraWorkStartDate
+            : undefined,
+          extraWorkEndDate: isCompensatory ? form.extraWorkEndDate : undefined,
           reason: form.reason,
         }),
       });
@@ -127,6 +134,8 @@ export default function ApplyLeave() {
           endDate: "",
           reason: "",
           halfDayPeriod: "",
+          extraWorkStartDate: "",
+          extraWorkEndDate: "",
         });
       }
     } catch {
@@ -250,6 +259,50 @@ export default function ApplyLeave() {
               </div>
             )}
           </div>
+
+          {/* Compensatory off — the extra day(s) actually worked */}
+          {isCompensatory && (
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1.5">
+                  Additional Work - Start Date
+                </label>
+                <input
+                  type="date"
+                  required
+                  value={form.extraWorkStartDate}
+                  onChange={(e) =>
+                    setForm((f) => ({
+                      ...f,
+                      extraWorkStartDate: e.target.value,
+                    }))
+                  }
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-gray-50/50"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1.5">
+                  Additional Work - End Date
+                </label>
+                <input
+                  type="date"
+                  required
+                  value={form.extraWorkEndDate}
+                  min={form.extraWorkStartDate}
+                  onChange={(e) =>
+                    setForm((f) => ({
+                      ...f,
+                      extraWorkEndDate: e.target.value,
+                    }))
+                  }
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-gray-50/50"
+                />
+              </div>
+              <p className="text-xs text-gray-400 -mt-2 col-span-2">
+                The date(s) you worked extra, which this compensatory off is being taken for.
+              </p>
+            </div>
+          )}
 
           {/* Days */}
           <div>

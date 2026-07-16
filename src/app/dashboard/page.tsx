@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import { Fragment, useEffect, useState } from "react";
 import Navbar from "@/components/Navbar";
 import CommentThread from "@/components/CommentThread";
-import { formatDate } from "@/lib/leave-calculator";
+import { formatDate, isSingleStageApproval } from "@/lib/leave-calculator";
+import { EmployeeType, LeaveType } from "@/lib/types";
 
 interface BalanceData {
   balance: {
@@ -18,12 +19,16 @@ interface BalanceData {
     name: string;
     designation: string;
     department: string;
+    employeeType: EmployeeType;
   };
 }
 
 interface Leave {
   id: string;
   leaveType: string;
+  extraWorkStartDate?: string;
+  extraWorkEndDate?: string;
+  rejectedByRole?: "manager" | "admin";
   startDate: string;
   endDate: string;
   days: number;
@@ -48,18 +53,52 @@ const TYPE_LABELS: Record<string, string> = {
   unpaid: "Unpaid Leave",
 };
 
-const STATUS_COLORS: Record<string, string> = {
-  pending: "bg-sunrise/10 text-yellow-700",
-  manager_approved: "bg-indigo-50 text-indigo-700",
-  approved: "bg-green-50 text-green-700",
-  rejected: "bg-coral/10 text-coral",
+// Tick/cross/dash mark for the LM's Approval / HR's Approval columns.
+const APPROVAL_MARKS: Record<string, { symbol: string; className: string }> = {
+  approved: { symbol: "✓", className: "text-green-500" },
+  rejected: { symbol: "✗", className: "text-coral" },
+  pending: { symbol: "–", className: "text-gray-400" },
 };
 
-const STATUS_LABELS: Record<string, string> = {
+// "pending" also covers "this stage's process already ended before
+// reaching HR" (e.g. Manager rejected, or HR never participates for this
+// leave type) — there's no separate mark for that, it just reads as a dash.
+function getStageMarks(
+  status: string,
+  rejectedByRole: string | undefined,
+  singleStage: boolean
+): { lm: string; hr: string } {
+  if (singleStage) {
+    const lm =
+      status === "approved"
+        ? "approved"
+        : status === "rejected"
+        ? "rejected"
+        : "pending";
+    return { lm, hr: "pending" };
+  }
+  if (status === "pending") return { lm: "pending", hr: "pending" };
+  if (status === "manager_approved") return { lm: "approved", hr: "pending" };
+  if (status === "approved") return { lm: "approved", hr: "approved" };
+  // rejected — default to "Manager rejected" for any legacy record that
+  // predates rejectedByRole (safer than guessing HR rejected something
+  // Manager never touched)
+  return rejectedByRole === "admin"
+    ? { lm: "approved", hr: "rejected" }
+    : { lm: "rejected", hr: "pending" };
+}
+
+const STAGE_LABELS: Record<string, string> = {
   pending: "Pending",
-  manager_approved: "Awaiting HR",
+  manager_approved: "Pending",
   approved: "Approved",
   rejected: "Rejected",
+};
+
+const STAGE_COLORS: Record<string, string> = {
+  Pending: "bg-sunrise/10 text-yellow-700",
+  Approved: "bg-green-50 text-green-700",
+  Rejected: "bg-coral/10 text-coral",
 };
 
 const HALF_DAY_LABELS: Record<string, string> = {
@@ -139,12 +178,15 @@ export default function Dashboard() {
             (t) => !primaryTypes.includes(t) && !excluded.includes(t)
           );
 
-          const renderCard = (type: string, i: number) => (
+          const renderCard = (type: string, i: number) => {
+            const usedUpThisMonth =
+              type === "ladies_wfh" && (balance.remaining[type] ?? 0) === 0;
+            return (
             <div
               key={type}
               className={`bg-white rounded-2xl border border-gray-100 border-l-4 ${
                 CARD_ACCENTS[i % CARD_ACCENTS.length]
-              } p-5 shadow-sm`}
+              } p-5 shadow-sm ${usedUpThisMonth ? "opacity-50" : ""}`}
             >
               <p className="text-sm font-medium text-gray-500 mb-2">
                 {TYPE_LABELS[type] || type}
@@ -156,7 +198,8 @@ export default function Dashboard() {
                 {balance.used[type] ?? 0} used of {balance.entitled[type] ?? 0}
               </p>
             </div>
-          );
+            );
+          };
 
           return (
             <div className="mb-10 space-y-6">
@@ -209,13 +252,19 @@ export default function Dashboard() {
                     Dates
                   </th>
                   <th className="text-left px-4 py-3 font-semibold text-indigo-900/70">
+                    Applied On
+                  </th>
+                  <th className="text-left px-4 py-3 font-semibold text-indigo-900/70">
                     Days
                   </th>
-                  <th className="text-left px-4 py-3 font-semibold text-indigo-900/70">
-                    Status
+                  <th className="text-center px-4 py-3 font-semibold text-indigo-900/70">
+                    LM&apos;s Approval
+                  </th>
+                  <th className="text-center px-4 py-3 font-semibold text-indigo-900/70">
+                    HR&apos;s Approval
                   </th>
                   <th className="text-left px-4 py-3 font-semibold text-indigo-900/70">
-                    Applied
+                    Stage
                   </th>
                 </tr>
               </thead>
@@ -226,7 +275,18 @@ export default function Dashboard() {
                       new Date(b.appliedOn).getTime() -
                       new Date(a.appliedOn).getTime()
                   )
-                  .map((leave) => (
+                  .map((leave) => {
+                    const stage = STAGE_LABELS[leave.status] || leave.status;
+                    const singleStage = isSingleStageApproval(
+                      employee.employeeType,
+                      leave.leaveType as LeaveType
+                    );
+                    const marks = getStageMarks(
+                      leave.status,
+                      leave.rejectedByRole,
+                      singleStage
+                    );
+                    return (
                     <Fragment key={leave.id}>
                       <tr className="hover:bg-gray-50/50">
                         <td className="px-4 py-3 font-medium">
@@ -240,23 +300,45 @@ export default function Dashboard() {
                         <td className="px-4 py-3 text-gray-600">
                           {formatDate(leave.startDate)} —{" "}
                           {formatDate(leave.endDate)}
-                        </td>
-                        <td className="px-4 py-3">{leave.days}</td>
-                        <td className="px-4 py-3">
-                          <span
-                            className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold ${
-                              STATUS_COLORS[leave.status] || ""
-                            }`}
-                          >
-                            {STATUS_LABELS[leave.status] || leave.status}
-                          </span>
+                          {leave.leaveType === "compensatory" &&
+                            leave.extraWorkStartDate &&
+                            leave.extraWorkEndDate && (
+                              <span className="block text-xs font-normal text-gray-400">
+                                Worked: {formatDate(leave.extraWorkStartDate)}{" "}
+                                – {formatDate(leave.extraWorkEndDate)}
+                              </span>
+                            )}
                         </td>
                         <td className="px-4 py-3 text-gray-500">
                           {formatDate(leave.appliedOn)}
                         </td>
+                        <td className="px-4 py-3">{leave.days}</td>
+                        <td className="px-4 py-3 text-center">
+                          <span
+                            className={`text-xl font-bold ${APPROVAL_MARKS[marks.lm].className}`}
+                          >
+                            {APPROVAL_MARKS[marks.lm].symbol}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <span
+                            className={`text-xl font-bold ${APPROVAL_MARKS[marks.hr].className}`}
+                          >
+                            {APPROVAL_MARKS[marks.hr].symbol}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span
+                            className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                              STAGE_COLORS[stage] || ""
+                            }`}
+                          >
+                            {stage}
+                          </span>
+                        </td>
                       </tr>
                       <tr>
-                        <td colSpan={5} className="px-4 pb-3">
+                        <td colSpan={7} className="px-4 pb-3">
                           <CommentThread
                             leaveId={leave.id}
                             currentUserEmail={user?.email || ""}
@@ -264,7 +346,8 @@ export default function Dashboard() {
                         </td>
                       </tr>
                     </Fragment>
-                  ))}
+                    );
+                  })}
               </tbody>
             </table>
           </div>

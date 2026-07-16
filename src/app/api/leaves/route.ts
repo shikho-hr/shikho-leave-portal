@@ -67,6 +67,8 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { leaveType, startDate, endDate, reason } = body;
     const halfDayPeriod = body.halfDayPeriod as HalfDayPeriod | undefined;
+    const extraWorkStartDate = body.extraWorkStartDate as string | undefined;
+    const extraWorkEndDate = body.extraWorkEndDate as string | undefined;
 
     if (
       !leaveType ||
@@ -124,7 +126,8 @@ export async function POST(req: NextRequest) {
       leaveType as LeaveType,
       days,
       halfDayPeriod,
-      allLeaves
+      allLeaves,
+      { startDate: extraWorkStartDate, endDate: extraWorkEndDate }
     );
 
     if (!validation.valid) {
@@ -139,6 +142,8 @@ export async function POST(req: NextRequest) {
       endDate,
       days,
       halfDayPeriod,
+      extraWorkStartDate,
+      extraWorkEndDate,
       reason,
       status: "pending",
       appliedOn: new Date().toISOString().split("T")[0],

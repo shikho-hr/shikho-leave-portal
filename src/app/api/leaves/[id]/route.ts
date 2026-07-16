@@ -6,6 +6,7 @@ import {
   getEmployeeByEmail,
   addComment,
 } from "@/lib/db";
+import { isSingleStageApproval } from "@/lib/leave-calculator";
 
 export async function PATCH(
   req: NextRequest,
@@ -59,8 +60,15 @@ export async function PATCH(
     // Determine the new status based on approval flow
     let newStatus: "manager_approved" | "approved" | "rejected" = status;
 
+    // Monthly WFH for Ladies only ever needs manager approval, regardless of
+    // employeeType — HR sign-off is skipped entirely for this leave type.
+    const isSingleStage = isSingleStageApproval(
+      employee.employeeType,
+      leave.leaveType
+    );
+
     if (status === "approved") {
-      if (employee.employeeType === "non-tele-sales") {
+      if (!isSingleStage) {
         // Two-stage approval for non-tele-sales
         if (leave.status === "pending" && role === "manager") {
           // Manager approves → goes to HR
@@ -83,8 +91,11 @@ export async function PATCH(
           );
         }
       } else {
-        // Tele-sales: single-stage approval
-        if (leave.status !== "pending") {
+        // Single-stage: tele-sales employees (any leave type), or Monthly
+        // WFH for Ladies (any employee type) — manager approval is final.
+        // Also allows an admin to finish off a leave already sitting at
+        // manager_approved from before this rule applied to it.
+        if (leave.status !== "pending" && leave.status !== "manager_approved") {
           return NextResponse.json(
             { error: "This leave has already been processed" },
             { status: 400 }
@@ -109,7 +120,8 @@ export async function PATCH(
       params.id,
       newStatus,
       user.email,
-      comments || ""
+      comments || "",
+      newStatus === "rejected" ? (role as "manager" | "admin") : undefined
     );
 
     // Auto-add a comment for the action

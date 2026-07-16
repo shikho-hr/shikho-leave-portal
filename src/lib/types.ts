@@ -53,12 +53,15 @@ export interface LeaveRequest {
   endDate: string;
   days: number; // supports 0.5 for half-day
   halfDayPeriod?: HalfDayPeriod;
+  extraWorkStartDate?: string; // compensatory only — date(s) actually worked extra
+  extraWorkEndDate?: string;
   reason: string;
   status: LeaveStatus;
   appliedOn: string;
   reviewedBy: string;
   reviewedOn: string;
   reviewerComments: string;
+  rejectedByRole?: "manager" | "admin"; // which stage did the rejecting, if rejected
 }
 
 // ── Leave balance ───────────────────────────────────────────────

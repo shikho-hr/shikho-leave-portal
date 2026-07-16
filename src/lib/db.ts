@@ -222,6 +222,12 @@ export async function createLeaveRequest(
     endDate: leave.endDate,
     days: leave.days,
     ...(leave.halfDayPeriod ? { halfDayPeriod: leave.halfDayPeriod } : {}),
+    ...(leave.extraWorkStartDate
+      ? { extraWorkStartDate: leave.extraWorkStartDate }
+      : {}),
+    ...(leave.extraWorkEndDate
+      ? { extraWorkEndDate: leave.extraWorkEndDate }
+      : {}),
     reason: leave.reason,
     status: leave.status,
     appliedOn: leave.appliedOn,
@@ -236,13 +242,15 @@ export async function updateLeaveStatus(
   leaveId: string,
   status: "manager_approved" | "approved" | "rejected",
   reviewedBy: string,
-  comments: string
+  comments: string,
+  rejectedByRole?: "manager" | "admin"
 ) {
   await leavesCol.doc(leaveId).update({
     status,
     reviewedBy,
     reviewedOn: new Date().toISOString().split("T")[0],
     reviewerComments: comments,
+    ...(rejectedByRole ? { rejectedByRole } : {}),
   });
 }
 

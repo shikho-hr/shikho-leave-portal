@@ -44,6 +44,7 @@ export async function GET() {
         name: employee.name,
         designation: employee.designation,
         department: employee.department,
+        employeeType: employee.employeeType,
       },
     });
   } catch (err) {
