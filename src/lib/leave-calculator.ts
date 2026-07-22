@@ -57,6 +57,21 @@ export function formatDate(dateStr: string): string {
   return format(parseISO(dateStr), "d MMM, yyyy");
 }
 
+// Display format for a leave's date range — drops the redundant repeated
+// year when both ends fall in the same year (e.g. "17 Oct - 23 Oct, 2026"),
+// but shows the year on both ends when a request spans New Year's
+// (e.g. "29 Dec, 2026 - 2 Jan, 2027"), and collapses to a single date for a
+// same-day (e.g. half-day or Monthly WFH) request.
+export function formatDateRange(startDate: string, endDate: string): string {
+  const start = parseISO(startDate);
+  const end = parseISO(endDate);
+  if (startDate === endDate) return format(start, "d MMM, yyyy");
+  if (start.getFullYear() === end.getFullYear()) {
+    return `${format(start, "d MMM")} - ${format(end, "d MMM, yyyy")}`;
+  }
+  return `${format(start, "d MMM, yyyy")} - ${format(end, "d MMM, yyyy")}`;
+}
+
 // Company weekend is Friday/Saturday.
 // Note: compare using local-time yyyy-MM-dd (via date-fns `format`), not
 // `date.toISOString()` — toISOString() converts to UTC, which silently
@@ -69,6 +84,41 @@ function isExcludedDay(date: Date, holidaySet: Set<string>): boolean {
   return holidaySet.has(format(date, "yyyy-MM-dd"));
 }
 
+// Splits a leave's day count by calendar year — most requests fall entirely
+// within one year (a single-entry result), but a request spanning New
+// Year's (e.g. Dec 30 – Jan 2) needs its days attributed to each year
+// separately, so each year's balance is only charged for the days that
+// actually fall within it. Excludes the weekend and any date in
+// holidayDates, same as the day-counting this replaces.
+export function splitDaysByYear(
+  startDate: string,
+  endDate: string,
+  halfDayPeriod: HalfDayPeriod | "" | undefined,
+  holidayDates: string[]
+): Record<string, number> {
+  const holidaySet = new Set(holidayDates);
+  const result: Record<string, number> = {};
+
+  if (halfDayPeriod) {
+    const date = parseISO(startDate);
+    if (!isExcludedDay(date, holidaySet)) {
+      result[String(date.getFullYear())] = 0.5;
+    }
+    return result;
+  }
+
+  let cursor = parseISO(startDate);
+  const end = parseISO(endDate);
+  while (!isAfter(cursor, end)) {
+    if (!isExcludedDay(cursor, holidaySet)) {
+      const key = String(cursor.getFullYear());
+      result[key] = (result[key] || 0) + 1;
+    }
+    cursor = addDays(cursor, 1);
+  }
+  return result;
+}
+
 // Counts leave days between startDate/endDate (inclusive), excluding the
 // weekend and any date in holidayDates. Half-day requests are always a
 // single date and count as 0.5 — unless that date itself is excluded, in
@@ -79,20 +129,9 @@ export function calculateLeaveDays(
   halfDayPeriod: HalfDayPeriod | "" | undefined,
   holidayDates: string[]
 ): number {
-  const holidaySet = new Set(holidayDates);
-
-  if (halfDayPeriod) {
-    return isExcludedDay(parseISO(startDate), holidaySet) ? 0 : 0.5;
-  }
-
-  let count = 0;
-  let cursor = parseISO(startDate);
-  const end = parseISO(endDate);
-  while (!isAfter(cursor, end)) {
-    if (!isExcludedDay(cursor, holidaySet)) count++;
-    cursor = addDays(cursor, 1);
-  }
-  return count;
+  return Object.values(
+    splitDaysByYear(startDate, endDate, halfDayPeriod, holidayDates)
+  ).reduce((sum, d) => sum + d, 0);
 }
 
 function monthsWorkedInYear(joiningDate: Date, year: number): number {
@@ -231,7 +270,14 @@ function nonTeleSalesEntitlement(
 
 // ── Calculate used leaves ───────────────────────────────────────
 
-function calculateUsed(approvedLeaves: LeaveRequest[]): LeaveBalance {
+// Attributes each leave's days to targetYear using its stored daysByYear
+// split — falling back to the pre-daysByYear behavior (100% attributed to
+// startDate's year) for records created before that field existed, so
+// nothing in Firestore needs a data migration.
+function calculateUsed(
+  approvedLeaves: LeaveRequest[],
+  targetYear: number
+): LeaveBalance {
   const used: LeaveBalance = {
     sick: 0,
     casual: 0,
@@ -248,9 +294,13 @@ function calculateUsed(approvedLeaves: LeaveRequest[]): LeaveBalance {
 
   for (const leave of approvedLeaves) {
     const type = leave.leaveType as LeaveType;
-    if (type in used) {
-      used[type] += leave.days;
-    }
+    if (!(type in used)) continue;
+    const yearDays =
+      leave.daysByYear?.[String(targetYear)] ??
+      (new Date(leave.startDate).getFullYear() === targetYear
+        ? leave.days
+        : 0);
+    used[type] += yearDays;
   }
 
   return used;
@@ -290,10 +340,10 @@ export function calculateBalance(
   approvedLeaves: LeaveRequest[],
   openingBalance?: OpeningBalance,
   snapshot?: BalanceSnapshot,
-  year?: number
+  year?: number,
+  asOfDate: Date = new Date()
 ): BalanceInfo {
   const targetYear = year || new Date().getFullYear();
-  const asOfDate = new Date();
 
   // Entitlement track is driven by contract type, not department — a
   // tele-sales employee who's full-time from day one gets the full formula
@@ -313,10 +363,7 @@ export function calculateBalance(
     }
   }
 
-  const yearLeaves = approvedLeaves.filter(
-    (l) => new Date(l.startDate).getFullYear() === targetYear
-  );
-  const used = calculateUsed(yearLeaves);
+  const used = calculateUsed(approvedLeaves, targetYear);
 
   // A historical balance snapshot (one-time CSV import) sets entitled to
   // the real historical entitlement and adds the historical "taken" on top
@@ -373,14 +420,20 @@ export function calculateBalance(
 
 export function validateLeaveRequest(
   employee: Employee,
-  balance: BalanceInfo,
+  balancesByYear: Record<string, BalanceInfo>,
   leaveType: LeaveType,
   days: number,
+  daysByYear: Record<string, number>,
+  requestStartDate: string,
   halfDayPeriod?: HalfDayPeriod,
   existingLeaves: LeaveRequest[] = [],
   extraWorkDates?: { startDate?: string; endDate?: string }
 ): { valid: boolean; error?: string } {
-  const onProbation = isOnProbation(employee, new Date());
+  // As-of the leave's own start date, not "today" — a backdated request
+  // must be judged against the employee's probation status at the time,
+  // not their current status (same root cause as the year-boundary bug
+  // this function was reworked to fix).
+  const onProbation = isOnProbation(employee, parseISO(requestStartDate));
 
   // Employees can never self-select Unpaid Leave — only HR/Admin can put a
   // request into this bucket, via the separate admin reclassification path
@@ -535,12 +588,18 @@ export function validateLeaveRequest(
   // SL > 3 days requires medical certificate (warn, don't block)
   // We allow submission but the UI can show a notice
 
-  // Check remaining balance
-  if (balance.remaining[leaveType] < days) {
-    return {
-      valid: false,
-      error: `Insufficient ${leaveType} leave balance. Available: ${balance.remaining[leaveType]}, Requested: ${days}`,
-    };
+  // Check remaining balance — per year, since a request spanning New Year's
+  // draws from two separate years' balances (see daysByYear).
+  for (const [yearStr, yearDays] of Object.entries(daysByYear)) {
+    const yearBalance = balancesByYear[yearStr];
+    if (!yearBalance || yearBalance.remaining[leaveType] < yearDays) {
+      return {
+        valid: false,
+        error: `Insufficient ${leaveType} leave balance for ${yearStr}. Available: ${
+          yearBalance?.remaining[leaveType] ?? 0
+        }, Requested: ${yearDays}`,
+      };
+    }
   }
 
   return { valid: true };

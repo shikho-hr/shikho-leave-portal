@@ -5,7 +5,12 @@ import { useRouter } from "next/navigation";
 import { Fragment, useEffect, useState } from "react";
 import Navbar from "@/components/Navbar";
 import CommentThread from "@/components/CommentThread";
-import { formatDate, isSingleStageApproval } from "@/lib/leave-calculator";
+import ReasonToggle from "@/components/ReasonToggle";
+import {
+  formatDate,
+  formatDateRange,
+  isSingleStageApproval,
+} from "@/lib/leave-calculator";
 import { EmployeeType, LeaveType } from "@/lib/types";
 
 interface BalanceData {
@@ -32,6 +37,7 @@ interface Leave {
   startDate: string;
   endDate: string;
   days: number;
+  daysByYear?: Record<string, number>;
   halfDayPeriod?: "first_half" | "second_half";
   reason: string;
   status: string;
@@ -51,6 +57,16 @@ const TYPE_LABELS: Record<string, string> = {
   compensatory: "Compensatory",
   wfh: "Work from Home",
   unpaid: "Unpaid Leave",
+};
+
+// Dates must be picked via the calendar UI, not typed — avoids mm/dd vs
+// dd/mm ambiguity from manual keyboard entry. Tab is still allowed through
+// for keyboard focus navigation.
+const blockManualDateEntry = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  if (e.key !== "Tab") e.preventDefault();
+};
+const blockDatePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+  e.preventDefault();
 };
 
 // Tick/cross/dash mark for the LM's Approval / HR's Approval columns.
@@ -115,12 +131,64 @@ const CARD_ACCENTS = [
   "border-l-green-500",
 ];
 
+// The Remaining/Taken toggle only applies to these three — Special Leave
+// (Marriage, Paternity, etc.) always shows remaining balance regardless.
+const GENERAL_LEAVE_TYPES = ["sick", "casual", "annual"];
+
+// Years to offer in the history dropdown — derived from years the employee
+// actually has approved General Leave records in, not a fixed lookback
+// window, so it naturally covers however far their history actually goes
+// (and never shows an empty year with nothing to find). Current year is
+// always included even with zero records yet.
+function getYearOptions(leaves: Leave[]): string[] {
+  const years = new Set<string>([String(new Date().getFullYear())]);
+  for (const l of leaves) {
+    if (!GENERAL_LEAVE_TYPES.includes(l.leaveType) || l.status !== "approved") {
+      continue;
+    }
+    if (l.daysByYear) {
+      Object.keys(l.daysByYear).forEach((y) => years.add(y));
+    } else {
+      years.add(l.startDate.slice(0, 4));
+      years.add(l.endDate.slice(0, 4));
+    }
+  }
+  return [
+    "lifetime",
+    ...Array.from(years).sort((a, b) => Number(b) - Number(a)),
+  ];
+}
+
+// How many of a leave's days fall in a given year — uses the per-year split
+// already recorded for requests spanning New Year's when available, since
+// that's exactly what daysByYear exists for; older records without it fall
+// back to a same-year check against start/end date.
+function daysInYear(leave: Leave, year: string): number {
+  if (year === "lifetime") return leave.days;
+  if (leave.daysByYear && leave.daysByYear[year] !== undefined) {
+    return leave.daysByYear[year];
+  }
+  if (leave.startDate.slice(0, 4) === year || leave.endDate.slice(0, 4) === year) {
+    return leave.days;
+  }
+  return 0;
+}
+
 export default function Dashboard() {
   const { user, status } = useAuth();
   const router = useRouter();
   const [balanceData, setBalanceData] = useState<BalanceData | null>(null);
   const [leaves, setLeaves] = useState<Leave[]>([]);
   const [loading, setLoading] = useState(true);
+  const [filterLeaveType, setFilterLeaveType] = useState("all");
+  const [filterStage, setFilterStage] = useState("all");
+  const [filterDateFrom, setFilterDateFrom] = useState("");
+  const [filterDateTo, setFilterDateTo] = useState("");
+  const [balanceView, setBalanceView] = useState<"remaining" | "taken">(
+    "remaining"
+  );
+  const [historyType, setHistoryType] = useState("sick");
+  const [historyYear, setHistoryYear] = useState("lifetime");
 
   useEffect(() => {
     if (status === "unauthenticated") router.replace("/");
@@ -154,15 +222,23 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-gray-50">
       <Navbar />
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="max-w-[96rem] mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-2xl font-bold text-gray-900">
-            Welcome, {employee.name}
-          </h1>
-          <p className="text-sm text-gray-500 mt-1">
-            {employee.designation} &middot; {employee.department}
-          </p>
+        <div className="mb-8 flex items-start justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">
+              Welcome, {employee.name}
+            </h1>
+            <p className="text-sm text-gray-500 mt-1">
+              {employee.designation} &middot; {employee.department}
+            </p>
+          </div>
+          <button
+            onClick={() => router.push("/apply")}
+            className="bg-indigo-600 text-white text-sm font-semibold px-5 py-2.5 rounded-2xl hover:bg-indigo-700 transition-colors shadow-sm"
+          >
+            + Apply Leave
+          </button>
         </div>
 
         {/* Balance cards */}
@@ -178,67 +254,249 @@ export default function Dashboard() {
             (t) => !primaryTypes.includes(t) && !excluded.includes(t)
           );
 
-          const renderCard = (type: string, i: number) => {
+          const renderCard = (type: string, i: number, compact = false) => {
             const usedUpThisMonth =
               type === "ladies_wfh" && (balance.remaining[type] ?? 0) === 0;
+            const isGeneralLeave = GENERAL_LEAVE_TYPES.includes(type);
+            const showTaken = balanceView === "taken" && isGeneralLeave;
             return (
             <div
               key={type}
               className={`bg-white rounded-2xl border border-gray-100 border-l-4 ${
                 CARD_ACCENTS[i % CARD_ACCENTS.length]
-              } p-5 shadow-sm ${usedUpThisMonth ? "opacity-50" : ""}`}
+              } ${compact ? "w-48 h-28 p-4" : "p-5"} shadow-sm ${
+                usedUpThisMonth ? "opacity-50" : ""
+              }`}
             >
-              <p className="text-sm font-medium text-gray-500 mb-2">
+              <p className="text-sm font-medium text-gray-500 mb-2 whitespace-nowrap">
                 {TYPE_LABELS[type] || type}
               </p>
-              <p className="text-3xl font-bold text-gray-900">
-                {balance.remaining[type] ?? 0}
+              <p
+                className={`font-bold text-gray-900 ${
+                  compact ? "text-2xl" : "text-3xl"
+                }`}
+              >
+                {showTaken
+                  ? balance.used[type] ?? 0
+                  : balance.remaining[type] ?? 0}
               </p>
-              <p className="text-xs text-gray-400 mt-1">
-                {balance.used[type] ?? 0} used of {balance.entitled[type] ?? 0}
-              </p>
+              {/* General Leave cards skip this — the Remaining/Taken toggle
+                  already surfaces the other number, so it'd be redundant */}
+              {!isGeneralLeave && (
+                <p className="text-xs text-gray-400 mt-1">
+                  {balance.used[type] ?? 0} used of {balance.entitled[type] ?? 0}
+                </p>
+              )}
             </div>
             );
           };
 
+          const yearOptions = getYearOptions(leaves);
+          const historyLeaves = leaves
+            .filter(
+              (l) =>
+                l.leaveType === historyType &&
+                l.status === "approved" &&
+                daysInYear(l, historyYear) > 0
+            )
+            .sort(
+              (a, b) =>
+                new Date(b.startDate).getTime() - new Date(a.startDate).getTime()
+            );
+          const historyTotal = historyLeaves.reduce(
+            (sum, l) => sum + daysInYear(l, historyYear),
+            0
+          );
+
           return (
-            <div className="mb-10 space-y-6">
-              <div>
-                <h3 className="text-lg font-bold text-gray-500 mb-3">
-                  General Leave
-                </h3>
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-                  {primaryTypes.map((type, i) => renderCard(type, i))}
+            <div className="mb-10">
+              <div className="flex flex-wrap items-start justify-between gap-8">
+                <div>
+                  <div className="flex items-center justify-between gap-4 mb-3">
+                    <h3 className="text-lg font-bold text-gray-500">
+                      General Leave
+                    </h3>
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => setBalanceView("remaining")}
+                        className={`px-4 py-1.5 rounded-xl text-sm font-semibold transition-colors ${
+                          balanceView === "remaining"
+                            ? "bg-indigo-600 text-white shadow-sm"
+                            : "bg-white text-gray-600 border border-gray-200 hover:border-indigo-300"
+                        }`}
+                      >
+                        Remaining
+                      </button>
+                      <button
+                        onClick={() => setBalanceView("taken")}
+                        className={`px-4 py-1.5 rounded-xl text-sm font-semibold transition-colors ${
+                          balanceView === "taken"
+                            ? "bg-indigo-600 text-white shadow-sm"
+                            : "bg-white text-gray-600 border border-gray-200 hover:border-indigo-300"
+                        }`}
+                      >
+                        Taken
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-4">
+                    {primaryTypes.map((type, i) => renderCard(type, i, true))}
+                  </div>
                 </div>
-              </div>
-              <div>
-                <h3 className="text-lg font-bold text-gray-500 mb-3">
-                  Special Leave
-                </h3>
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-                  {secondaryTypes.map((type, i) => renderCard(type, i))}
-                </div>
+                {balanceView === "remaining" && (
+                  <div>
+                    <h3 className="text-lg font-bold text-gray-500 mb-3">
+                      Special Leave
+                    </h3>
+                    <div className="flex flex-wrap gap-4">
+                      {secondaryTypes.map((type, i) => renderCard(type, i, true))}
+                    </div>
+                  </div>
+                )}
+
+                {balanceView === "taken" && (
+                  <div className="flex-1 min-w-[320px]">
+                    <div className="flex flex-wrap items-center gap-2 mb-3">
+                      <select
+                        value={historyType}
+                        onChange={(e) => setHistoryType(e.target.value)}
+                        className="border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white"
+                      >
+                        {primaryTypes.map((type) => (
+                          <option key={type} value={type}>
+                            {TYPE_LABELS[type] || type}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        value={historyYear}
+                        onChange={(e) => setHistoryYear(e.target.value)}
+                        className="border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white"
+                      >
+                        {yearOptions.map((year) => (
+                          <option key={year} value={year}>
+                            {year === "lifetime" ? "Lifetime" : year}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="max-w-xl bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                      {historyLeaves.length === 0 ? (
+                        <p className="p-6 text-center text-sm text-gray-400">
+                          No {TYPE_LABELS[historyType] || historyType} taken
+                          {historyYear === "lifetime" ? "" : ` in ${historyYear}`}
+                        </p>
+                      ) : (
+                        <>
+                          <div className="px-4 py-2 text-xs font-medium text-gray-500 bg-gray-50/50 border-b border-gray-100">
+                            {historyTotal} day{historyTotal === 1 ? "" : "s"}{" "}
+                            taken
+                            {historyYear === "lifetime" ? "" : ` in ${historyYear}`}
+                          </div>
+                          <div className="grid grid-cols-[1.4fr_1fr_0.6fr] gap-3 px-4 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wide border-b border-gray-100">
+                            <span>Dates</span>
+                            <span>Applied On</span>
+                            <span className="text-right">Days</span>
+                          </div>
+                          <div className="divide-y divide-gray-50">
+                            {historyLeaves.map((l) => (
+                              <div
+                                key={l.id}
+                                className="grid grid-cols-[1.4fr_1fr_0.6fr] gap-3 items-center px-4 py-3 text-sm"
+                              >
+                                <span className="font-medium">
+                                  {formatDateRange(l.startDate, l.endDate)}
+                                </span>
+                                <span className="text-gray-500">
+                                  {formatDate(l.appliedOn)}
+                                </span>
+                                <span className="text-gray-500 text-right">
+                                  {daysInYear(l, historyYear)} day
+                                  {daysInYear(l, historyYear) === 1 ? "" : "s"}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           );
         })()}
 
+        {balanceView === "remaining" && (
+        <>
         {/* Recent requests */}
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <h2 className="text-lg font-semibold text-gray-800">
             My Leave Requests
           </h2>
-          <button
-            onClick={() => router.push("/apply")}
-            className="bg-indigo-600 text-white text-sm font-semibold px-5 py-2.5 rounded-2xl hover:bg-indigo-700 transition-colors shadow-sm"
-          >
-            + Apply Leave
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={filterLeaveType}
+              onChange={(e) => setFilterLeaveType(e.target.value)}
+              className="border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white"
+            >
+              <option value="all">All Leave Types</option>
+              {availableTypes.map((type) => (
+                <option key={type} value={type}>
+                  {TYPE_LABELS[type] || type}
+                </option>
+              ))}
+            </select>
+            <select
+              value={filterStage}
+              onChange={(e) => setFilterStage(e.target.value)}
+              className="border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white"
+            >
+              <option value="all">All Stages</option>
+              <option value="Pending">Pending</option>
+              <option value="Approved">Approved</option>
+              <option value="Rejected">Rejected</option>
+            </select>
+            <div className="flex items-center gap-2">
+              <input
+                type="date"
+                value={filterDateFrom}
+                onChange={(e) => setFilterDateFrom(e.target.value)}
+                onKeyDown={blockManualDateEntry}
+                onPaste={blockDatePaste}
+                className="border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white"
+                aria-label="Leave dates on or after"
+              />
+              <span className="text-gray-400 text-sm">to</span>
+              <input
+                type="date"
+                value={filterDateTo}
+                onChange={(e) => setFilterDateTo(e.target.value)}
+                onKeyDown={blockManualDateEntry}
+                onPaste={blockDatePaste}
+                className="border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white"
+                aria-label="Leave dates on or before"
+              />
+            </div>
+          </div>
         </div>
 
-        {leaves.length === 0 ? (
+        {(() => {
+          const filteredLeaves = leaves.filter((l) => {
+            const stage = STAGE_LABELS[l.status] || l.status;
+            return (
+              (filterLeaveType === "all" || l.leaveType === filterLeaveType) &&
+              (filterStage === "all" || stage === filterStage) &&
+              (!filterDateFrom || l.endDate >= filterDateFrom) &&
+              (!filterDateTo || l.startDate <= filterDateTo)
+            );
+          });
+
+          return filteredLeaves.length === 0 ? (
           <div className="bg-white rounded-2xl border border-gray-100 p-10 text-center text-gray-400 shadow-sm">
-            No leave requests yet
+            {leaves.length === 0
+              ? "No leave requests yet"
+              : "No leave requests match these filters"}
           </div>
         ) : (
           <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-sm">
@@ -269,7 +527,7 @@ export default function Dashboard() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {leaves
+                {filteredLeaves
                   .sort(
                     (a, b) =>
                       new Date(b.appliedOn).getTime() -
@@ -298,8 +556,7 @@ export default function Dashboard() {
                           )}
                         </td>
                         <td className="px-4 py-3 text-gray-600">
-                          {formatDate(leave.startDate)} —{" "}
-                          {formatDate(leave.endDate)}
+                          {formatDateRange(leave.startDate, leave.endDate)}
                           {leave.leaveType === "compensatory" &&
                             leave.extraWorkStartDate &&
                             leave.extraWorkEndDate && (
@@ -339,6 +596,7 @@ export default function Dashboard() {
                       </tr>
                       <tr>
                         <td colSpan={7} className="px-4 pb-3">
+                          <ReasonToggle reason={leave.reason} />
                           <CommentThread
                             leaveId={leave.id}
                             currentUserEmail={user?.email || ""}
@@ -351,6 +609,9 @@ export default function Dashboard() {
               </tbody>
             </table>
           </div>
+          );
+        })()}
+        </>
         )}
       </main>
     </div>

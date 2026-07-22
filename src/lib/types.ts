@@ -52,6 +52,7 @@ export interface LeaveRequest {
   startDate: string;
   endDate: string;
   days: number; // supports 0.5 for half-day
+  daysByYear?: Record<string, number>; // days split per calendar year, for New Year-boundary-spanning requests — absent on records created before this field existed
   halfDayPeriod?: HalfDayPeriod;
   extraWorkStartDate?: string; // compensatory only — date(s) actually worked extra
   extraWorkEndDate?: string;

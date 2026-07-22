@@ -3,16 +3,50 @@
 import { useAuth } from "@/lib/AuthContext";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 
 export default function Navbar() {
   const { user, signOutUser } = useAuth();
   const pathname = usePathname();
   const role = user?.role;
+  const [pendingCount, setPendingCount] = useState(0);
+
+  useEffect(() => {
+    if (role !== "manager" && role !== "admin") return;
+
+    const fetches: Promise<unknown>[] = [
+      fetch("/api/leaves?view=pending").then((r) => r.json()),
+    ];
+    // Admins/HR also have a second queue (requests manager-approved and
+    // awaiting HR's final sign-off) that counts toward "do I have anything
+    // pending" just as much as the manager-stage queue does.
+    if (role === "admin") {
+      fetches.push(fetch("/api/leaves?view=hr").then((r) => r.json()));
+    }
+
+    Promise.all(fetches).then((results) => {
+      const total = results.reduce(
+        (sum: number, data) => sum + (Array.isArray(data) ? data.length : 0),
+        0
+      );
+      setPendingCount(total);
+    });
+  }, [role]);
+
+  const pendingCountLabel = pendingCount >= 10 ? "9+" : String(pendingCount);
 
   const links = [
     { href: "/dashboard", label: "Dashboard" },
     ...(role === "manager" || role === "admin"
-      ? [{ href: "/approvals", label: "Approvals" }]
+      ? [
+          {
+            href: "/approvals",
+            label:
+              pendingCount > 0
+                ? `Team's Leave Requests (${pendingCountLabel})`
+                : "Team's Leave Requests",
+          },
+        ]
       : []),
     ...(role === "manager" || role === "admin"
       ? [{ href: "/admin", label: "Team Details" }]

@@ -35,6 +35,27 @@ export async function getEmployeeByEmail(
   return doc.exists ? (doc.data() as Employee) : null;
 }
 
+// Resolves a small set of reviewer emails to display names, for showing
+// "Reviewed by <name>" instead of a raw email (History tab, Team Details'
+// "Reviewed By" column). Cheap — usually just the handful of managers/HR
+// who've actually reviewed something — via direct doc gets rather than a
+// collection query, since doc ID is already the lowercase email.
+export async function getEmployeeNamesByEmails(
+  emails: string[]
+): Promise<Map<string, string>> {
+  const unique = Array.from(
+    new Set(emails.filter(Boolean).map((e) => e.toLowerCase()))
+  );
+  const docs = await Promise.all(
+    unique.map((email) => employeesCol.doc(email).get())
+  );
+  const map = new Map<string, string>();
+  docs.forEach((doc, i) => {
+    if (doc.exists) map.set(unique[i], (doc.data() as Employee).name);
+  });
+  return map;
+}
+
 export async function getEmployeesByManager(
   managerEmail: string
 ): Promise<Employee[]> {
@@ -221,6 +242,7 @@ export async function createLeaveRequest(
     startDate: leave.startDate,
     endDate: leave.endDate,
     days: leave.days,
+    daysByYear: leave.daysByYear || {},
     ...(leave.halfDayPeriod ? { halfDayPeriod: leave.halfDayPeriod } : {}),
     ...(leave.extraWorkStartDate
       ? { extraWorkStartDate: leave.extraWorkStartDate }

@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import Navbar from "@/components/Navbar";
 import CommentThread from "@/components/CommentThread";
 import InternalNoteThread from "@/components/InternalNoteThread";
-import { formatDate } from "@/lib/leave-calculator";
+import { formatDate, formatDateRange } from "@/lib/leave-calculator";
 
 interface PendingLeave {
   id: string;
@@ -22,7 +22,24 @@ interface PendingLeave {
   reason: string;
   status: string;
   appliedOn: string;
+  reviewedBy?: string;
+  reviewedByName?: string;
+  rejectedByRole?: "manager" | "admin";
 }
+
+const STATUS_LABELS: Record<string, string> = {
+  pending: "Pending",
+  manager_approved: "Awaiting HR",
+  approved: "Approved",
+  rejected: "Rejected",
+};
+
+const STATUS_COLORS: Record<string, string> = {
+  pending: "bg-sunrise/10 text-yellow-700",
+  manager_approved: "bg-indigo-50 text-indigo-700",
+  approved: "bg-green-50 text-green-700",
+  rejected: "bg-coral/10 text-coral",
+};
 
 const TYPE_LABELS: Record<string, string> = {
   sick: "Sick Leave",
@@ -43,16 +60,33 @@ const HALF_DAY_LABELS: Record<string, string> = {
   second_half: "Second half",
 };
 
+const LEAVE_TYPE_OPTIONS = Object.keys(TYPE_LABELS);
+
+// Dates must be picked via the calendar UI, not typed — avoids mm/dd vs
+// dd/mm ambiguity from manual keyboard entry. Tab is still allowed through
+// for keyboard focus navigation.
+const blockManualDateEntry = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  if (e.key !== "Tab") e.preventDefault();
+};
+const blockDatePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+  e.preventDefault();
+};
+
 export default function Approvals() {
   const { user, status } = useAuth();
   const router = useRouter();
-  const [tab, setTab] = useState<"pending" | "hr">("pending");
+  const [tab, setTab] = useState<"pending" | "hr" | "history">("pending");
   const [pendingLeaves, setPendingLeaves] = useState<PendingLeave[]>([]);
   const [hrLeaves, setHrLeaves] = useState<PendingLeave[]>([]);
+  const [historyLeaves, setHistoryLeaves] = useState<PendingLeave[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionId, setActionId] = useState<string | null>(null);
   const [comments, setComments] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [filterLeaveType, setFilterLeaveType] = useState("all");
+  const [filterStatus, setFilterStatus] = useState("all");
+  const [filterDateFrom, setFilterDateFrom] = useState("");
+  const [filterDateTo, setFilterDateTo] = useState("");
 
   const isAdmin = user?.role === "admin";
 
@@ -70,6 +104,11 @@ export default function Approvals() {
         .then((data) =>
           setPendingLeaves(Array.isArray(data) ? data : [])
         ),
+      // History — every request this manager/HR can see, at any stage, so
+      // approved/rejected requests don't just disappear once actioned.
+      fetch("/api/leaves?view=all")
+        .then((r) => r.json())
+        .then((data) => setHistoryLeaves(Array.isArray(data) ? data : [])),
     ];
 
     if (isAdmin) {
@@ -123,6 +162,11 @@ export default function Approvals() {
           delete next[leaveId];
           return next;
         });
+        // Refresh History so the just-actioned request shows its new
+        // status there instead of just vanishing from the queue.
+        fetch("/api/leaves?view=all")
+          .then((r) => r.json())
+          .then((d) => setHistoryLeaves(Array.isArray(d) ? d : []));
       } else {
         setErrors((e) => ({
           ...e,
@@ -147,15 +191,27 @@ export default function Approvals() {
     );
   }
 
-  const currentLeaves = tab === "pending" ? pendingLeaves : hrLeaves;
+  const currentLeaves =
+    tab === "pending" ? pendingLeaves : tab === "hr" ? hrLeaves : historyLeaves;
   const approveLabel = tab === "hr" ? "Approve (Final)" : "Approve";
+
+  const filteredLeaves =
+    tab !== "history"
+      ? currentLeaves
+      : currentLeaves.filter(
+          (l) =>
+            (filterLeaveType === "all" || l.leaveType === filterLeaveType) &&
+            (filterStatus === "all" || l.status === filterStatus) &&
+            (!filterDateFrom || l.endDate >= filterDateFrom) &&
+            (!filterDateTo || l.startDate <= filterDateTo)
+  );
 
   return (
     <div className="min-h-screen bg-gray-50">
       <Navbar />
-      <main className="max-w-4xl mx-auto px-4 py-8">
+      <main className="max-w-3xl mx-auto px-4 py-8">
         <h1 className="text-2xl font-bold text-gray-900 mb-6">
-          Approvals
+          Leave Requests
         </h1>
 
         {/* Tabs */}
@@ -192,6 +248,16 @@ export default function Approvals() {
               )}
             </button>
           )}
+          <button
+            onClick={() => setTab("history")}
+            className={`px-5 py-2 rounded-xl text-sm font-semibold transition-colors ${
+              tab === "history"
+                ? "bg-gray-800 text-white shadow-sm"
+                : "bg-white text-gray-600 border border-gray-200 hover:border-gray-400"
+            }`}
+          >
+            History
+          </button>
         </div>
 
         {tab === "hr" && (
@@ -201,15 +267,70 @@ export default function Approvals() {
           </p>
         )}
 
-        {currentLeaves.length === 0 ? (
+        {/* Filters — History only; Manager/HR Approval are queues, not
+            something worth filtering down */}
+        {tab === "history" && (
+        <div className="flex flex-wrap items-center gap-2 mb-4">
+          <select
+            value={filterLeaveType}
+            onChange={(e) => setFilterLeaveType(e.target.value)}
+            className="border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white"
+          >
+            <option value="all">All Leave Types</option>
+            {LEAVE_TYPE_OPTIONS.map((type) => (
+              <option key={type} value={type}>
+                {TYPE_LABELS[type]}
+              </option>
+            ))}
+          </select>
+          <select
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
+            className="border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white"
+          >
+            <option value="all">All Status</option>
+            <option value="pending">Pending</option>
+            <option value="manager_approved">Awaiting HR</option>
+            <option value="approved">Approved</option>
+            <option value="rejected">Rejected</option>
+          </select>
+          <div className="flex items-center gap-2">
+            <input
+              type="date"
+              value={filterDateFrom}
+              onChange={(e) => setFilterDateFrom(e.target.value)}
+              onKeyDown={blockManualDateEntry}
+              onPaste={blockDatePaste}
+              className="border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white"
+              aria-label="Leave dates on or after"
+            />
+            <span className="text-gray-400 text-sm">to</span>
+            <input
+              type="date"
+              value={filterDateTo}
+              onChange={(e) => setFilterDateTo(e.target.value)}
+              onKeyDown={blockManualDateEntry}
+              onPaste={blockDatePaste}
+              className="border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white"
+              aria-label="Leave dates on or before"
+            />
+          </div>
+        </div>
+        )}
+
+        {filteredLeaves.length === 0 ? (
           <div className="bg-white rounded-2xl border border-gray-100 p-10 text-center text-gray-400 shadow-sm">
-            {tab === "pending"
+            {currentLeaves.length > 0
+              ? "No leave requests match these filters"
+              : tab === "pending"
               ? "No pending leave requests"
-              : "No requests awaiting HR approval"}
+              : tab === "hr"
+              ? "No requests awaiting HR approval"
+              : "No leave request activity yet"}
           </div>
         ) : (
           <div className="space-y-4">
-            {currentLeaves.map((leave) => (
+            {filteredLeaves.map((leave) => (
               <div
                 key={leave.id}
                 className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm"
@@ -218,9 +339,6 @@ export default function Approvals() {
                   <div>
                     <p className="font-semibold text-gray-900">
                       {leave.employeeName}
-                    </p>
-                    <p className="text-sm text-gray-500">
-                      {leave.employeeEmail}
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -235,7 +353,7 @@ export default function Approvals() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm mb-4">
+                <div className="grid grid-cols-2 sm:grid-cols-[1fr_1.4fr_0.6fr_2fr] items-center gap-x-6 gap-y-3 text-sm mb-4">
                   <div>
                     <p className="text-gray-400 text-xs uppercase tracking-wide">
                       Type
@@ -254,8 +372,7 @@ export default function Approvals() {
                       Dates
                     </p>
                     <p className="font-medium mt-0.5">
-                      {formatDate(leave.startDate)} —{" "}
-                      {formatDate(leave.endDate)}
+                      {formatDateRange(leave.startDate, leave.endDate)}
                       {leave.leaveType === "compensatory" &&
                         leave.extraWorkStartDate &&
                         leave.extraWorkEndDate && (
@@ -292,47 +409,69 @@ export default function Approvals() {
                   currentUserEmail={user?.email || ""}
                 />
 
-                {/* Action buttons */}
-                <div className="flex items-end gap-3 mt-4 pt-3 border-t border-gray-100">
-                  <div className="flex-1">
-                    <input
-                      type="text"
-                      placeholder="Add comment (required if rejecting)"
-                      value={comments[leave.id] || ""}
-                      onChange={(e) => {
-                        setComments((c) => ({
-                          ...c,
-                          [leave.id]: e.target.value,
-                        }));
-                        setErrors((err) => {
-                          const next = { ...err };
-                          delete next[leave.id];
-                          return next;
-                        });
-                      }}
-                      className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 bg-gray-50/50"
-                    />
-                    {errors[leave.id] && (
-                      <p className="text-xs text-coral mt-1">
-                        {errors[leave.id]}
-                      </p>
+                {tab === "history" ? (
+                  <div className="flex items-center justify-between mt-4 pt-3 border-t border-gray-100">
+                    <span
+                      className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                        STATUS_COLORS[leave.status] || ""
+                      }`}
+                    >
+                      {STATUS_LABELS[leave.status] || leave.status}
+                      {leave.status === "rejected" &&
+                        leave.rejectedByRole &&
+                        ` (by ${
+                          leave.rejectedByRole === "admin" ? "HR" : "Manager"
+                        })`}
+                    </span>
+                    {leave.reviewedBy && (
+                      <span className="text-xs text-gray-400">
+                        Reviewed by {leave.reviewedByName || leave.reviewedBy}
+                      </span>
                     )}
                   </div>
-                  <button
-                    onClick={() => handleAction(leave.id, "approved")}
-                    disabled={actionId === leave.id}
-                    className="bg-green-600 text-white text-sm font-semibold px-5 py-2 rounded-xl hover:bg-green-700 disabled:opacity-50 transition-colors"
-                  >
-                    {approveLabel}
-                  </button>
-                  <button
-                    onClick={() => handleAction(leave.id, "rejected")}
-                    disabled={actionId === leave.id}
-                    className="bg-coral text-white text-sm font-semibold px-5 py-2 rounded-xl hover:opacity-90 disabled:opacity-50 transition-colors"
-                  >
-                    Reject
-                  </button>
-                </div>
+                ) : (
+                  /* Action buttons */
+                  <div className="flex items-end gap-3 mt-4 pt-3 border-t border-gray-100">
+                    <div className="flex-1">
+                      <input
+                        type="text"
+                        placeholder="Add comment (required if rejecting)"
+                        value={comments[leave.id] || ""}
+                        onChange={(e) => {
+                          setComments((c) => ({
+                            ...c,
+                            [leave.id]: e.target.value,
+                          }));
+                          setErrors((err) => {
+                            const next = { ...err };
+                            delete next[leave.id];
+                            return next;
+                          });
+                        }}
+                        className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 bg-gray-50/50"
+                      />
+                      {errors[leave.id] && (
+                        <p className="text-xs text-coral mt-1">
+                          {errors[leave.id]}
+                        </p>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => handleAction(leave.id, "approved")}
+                      disabled={actionId === leave.id}
+                      className="bg-green-600 text-white text-sm font-semibold px-5 py-2 rounded-xl hover:bg-green-700 disabled:opacity-50 transition-colors"
+                    >
+                      {approveLabel}
+                    </button>
+                    <button
+                      onClick={() => handleAction(leave.id, "rejected")}
+                      disabled={actionId === leave.id}
+                      className="bg-coral text-white text-sm font-semibold px-5 py-2 rounded-xl hover:opacity-90 disabled:opacity-50 transition-colors"
+                    >
+                      Reject
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </div>

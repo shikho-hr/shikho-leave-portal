@@ -8,6 +8,7 @@ import {
   getLeaveRequests,
   createLeaveRequest,
   getEmployeeByEmail,
+  getEmployeeNamesByEmails,
   getApprovedLeavesByEmployee,
   getLeavesAwaitingHR,
   addComment,
@@ -19,10 +20,24 @@ import {
   calculateBalance,
   validateLeaveRequest,
   calculateLeaveDays,
+  splitDaysByYear,
   REASON_OPTIONAL_TYPES,
   MIN_REASON_LENGTH,
 } from "@/lib/leave-calculator";
-import { LeaveType, HalfDayPeriod } from "@/lib/types";
+import { LeaveType, HalfDayPeriod, BalanceInfo, LeaveRequest } from "@/lib/types";
+import { parseISO } from "date-fns";
+
+// Attaches a display name for reviewedBy (an email) — the History tab shows
+// "Reviewed by <name>", which reads far better than a raw email address.
+async function withReviewerNames(leaves: LeaveRequest[]) {
+  const names = await getEmployeeNamesByEmails(leaves.map((l) => l.reviewedBy));
+  return leaves.map((l) => ({
+    ...l,
+    reviewedByName: l.reviewedBy
+      ? names.get(l.reviewedBy.toLowerCase())
+      : undefined,
+  }));
+}
 
 export async function GET(req: NextRequest) {
   const user = await getCurrentUser();
@@ -45,7 +60,7 @@ export async function GET(req: NextRequest) {
 
     if (view === "all" && user.role === "admin") {
       const leaves = await getLeaveRequests();
-      return NextResponse.json(leaves);
+      return NextResponse.json(await withReviewerNames(leaves));
     }
 
     if (view === "all" && user.role === "manager") {
@@ -53,7 +68,7 @@ export async function GET(req: NextRequest) {
         (e) => e.status === "active"
       );
       const leaves = await getLeavesByEmployees(reportees.map((e) => e.email));
-      return NextResponse.json(leaves);
+      return NextResponse.json(await withReviewerNames(leaves));
     }
 
     // Default: my leaves
@@ -119,22 +134,47 @@ export async function POST(req: NextRequest) {
       holidays.map((h) => h.date)
     );
 
-    // Validate balance
+    // Validate balance — per year, since a backdated request applied for
+    // after New Year's can span two calendar years (e.g. taken Dec 30 but
+    // applied for Jan 2). Each year's portion is checked against that
+    // year's own balance, not whichever year "today" happens to be.
+    const daysByYear = splitDaysByYear(
+      startDate,
+      endDate,
+      halfDayPeriod,
+      holidays.map((h) => h.date)
+    );
+    const startYear = parseISO(startDate).getFullYear();
+
     const approved = await getApprovedLeavesByEmployee(user.email);
     const allLeaves = await getLeavesByEmployee(user.email);
     const openingBalance = await getOpeningBalance(user.email);
     const snapshot = await getBalanceSnapshot(user.email);
-    const balance = calculateBalance(
-      employee,
-      approved,
-      openingBalance || undefined,
-      snapshot || undefined
-    );
+
+    const balancesByYear: Record<string, BalanceInfo> = {};
+    for (const yearStr of Object.keys(daysByYear)) {
+      const year = Number(yearStr);
+      // Probation-as-of check uses the leave's own date within that year's
+      // portion, not "today" — startDate for the earlier year, endDate for
+      // the (at most one) later year a request can span.
+      const asOfDate = year === startYear ? parseISO(startDate) : parseISO(endDate);
+      balancesByYear[yearStr] = calculateBalance(
+        employee,
+        approved,
+        openingBalance || undefined,
+        snapshot || undefined,
+        year,
+        asOfDate
+      );
+    }
+
     const validation = validateLeaveRequest(
       employee,
-      balance,
+      balancesByYear,
       leaveType as LeaveType,
       days,
+      daysByYear,
+      startDate,
       halfDayPeriod,
       allLeaves,
       { startDate: extraWorkStartDate, endDate: extraWorkEndDate }
@@ -151,6 +191,7 @@ export async function POST(req: NextRequest) {
       startDate,
       endDate,
       days,
+      daysByYear,
       halfDayPeriod,
       extraWorkStartDate,
       extraWorkEndDate,

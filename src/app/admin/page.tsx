@@ -4,7 +4,7 @@ import { useAuth } from "@/lib/AuthContext";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import Navbar from "@/components/Navbar";
-import { formatDate } from "@/lib/leave-calculator";
+import { formatDate, formatDateRange } from "@/lib/leave-calculator";
 
 interface EmployeeWithBalance {
   id: string;
@@ -29,6 +29,7 @@ interface LeaveRow {
   status: string;
   appliedOn: string;
   reviewedBy: string;
+  reviewedByName?: string;
   extraWorkStartDate?: string;
   extraWorkEndDate?: string;
 }
@@ -584,7 +585,7 @@ export default function AdminDashboard() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-gray-600">
-                      {formatDate(l.startDate)} — {formatDate(l.endDate)}
+                      {formatDateRange(l.startDate, l.endDate)}
                       {l.leaveType === "compensatory" &&
                         l.extraWorkStartDate &&
                         l.extraWorkEndDate && (
@@ -608,7 +609,7 @@ export default function AdminDashboard() {
                       {formatDate(l.appliedOn)}
                     </td>
                     <td className="px-4 py-3 text-gray-500">
-                      {l.reviewedBy || "—"}
+                      {l.reviewedByName || l.reviewedBy || "—"}
                     </td>
                   </tr>
                 ))}
