@@ -45,7 +45,11 @@ const TYPE_LABELS: Record<string, string> = {
   unpaid: "Unpaid Leave",
 };
 
-const LEAVE_TYPE_OPTIONS = Object.keys(TYPE_LABELS);
+// Unpaid leave is deliberately not offered as a filter option; unpaid
+// leaves still count toward the "All Leave Types" totals.
+const LEAVE_TYPE_OPTIONS = Object.keys(TYPE_LABELS).filter(
+  (t) => t !== "unpaid"
+);
 
 // Dates must be picked via the calendar UI, not typed — avoids mm/dd vs
 // dd/mm ambiguity from manual keyboard entry. Tab is still allowed through
