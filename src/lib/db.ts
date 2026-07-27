@@ -7,6 +7,7 @@ import {
   Holiday,
   OpeningBalance,
   BalanceSnapshot,
+  Notification,
 } from "./types";
 
 const employeesCol = adminDb.collection("employees");
@@ -16,6 +17,7 @@ const internalNotesCol = adminDb.collection("internalNotes");
 const holidaysCol = adminDb.collection("holidays");
 const openingBalancesCol = adminDb.collection("openingBalances");
 const balanceSnapshotsCol = adminDb.collection("balanceSnapshots");
+const notificationsCol = adminDb.collection("notifications");
 
 // ── Employees ──────────────────────────────────────────────────
 
@@ -392,7 +394,97 @@ export async function addComment(
     createdAt: new Date().toISOString(),
   };
   await commentsCol.doc(id).set(data);
+  await notifyRecipients(leaveId, authorEmail, authorName, comment, false);
   return data;
+}
+
+// Fans a comment/note out to everyone with a stake in the leave it's on —
+// minus whoever wrote it, so nobody gets notified about their own message.
+// Regular comments go to the employee, their manager, and every HR/admin.
+// Internal notes go to the manager and HR/admins only — the employee is
+// deliberately never a recipient, matching internalNotes' own visibility
+// rule ("never exposed to the employee"). Best-effort: a missing
+// leave/employee record just means fewer recipients, never a thrown error,
+// since a notification failing to send shouldn't block the comment itself.
+async function notifyRecipients(
+  leaveId: string,
+  authorEmail: string,
+  authorName: string,
+  commentText: string,
+  isInternalNote: boolean
+): Promise<void> {
+  const leave = await getLeaveById(leaveId);
+  if (!leave) return;
+
+  const recipients = new Set<string>();
+  if (!isInternalNote) {
+    recipients.add(leave.employeeEmail.toLowerCase());
+  }
+
+  const employee = await getEmployeeByEmail(leave.employeeEmail);
+  if (employee?.managerEmail) {
+    recipients.add(employee.managerEmail.toLowerCase());
+  }
+
+  const adminSnap = await employeesCol.where("role", "==", "admin").get();
+  adminSnap.docs.forEach((d) =>
+    recipients.add((d.data() as Employee).email.toLowerCase())
+  );
+
+  recipients.delete(authorEmail.toLowerCase());
+  if (recipients.size === 0) return;
+
+  const batch = adminDb.batch();
+  const createdAt = new Date().toISOString();
+  recipients.forEach((recipientEmail) => {
+    const notifId = `NOTIF-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const notification: Notification = {
+      id: notifId,
+      recipientEmail,
+      leaveId,
+      leaveType: leave.leaveType,
+      employeeName: leave.employeeName,
+      commentAuthorName: authorName,
+      commentPreview: commentText.slice(0, 140),
+      isInternalNote,
+      read: false,
+      createdAt,
+    };
+    batch.set(notificationsCol.doc(notifId), notification);
+  });
+  await batch.commit();
+}
+
+// ── Notifications ───────────────────────────────────────────────
+// No orderBy in the query (avoids needing a composite index that then has
+// to be manually deployed — see the HR-approval index gotcha already hit
+// once in production); sorted in memory instead. Scoped to one recipient's
+// own notifications, not a collection-wide scan, so this stays cheap.
+
+export async function getNotificationsForUser(
+  email: string,
+  limitCount = 30
+): Promise<Notification[]> {
+  const snap = await notificationsCol
+    .where("recipientEmail", "==", email.toLowerCase())
+    .get();
+  return snap.docs
+    .map((d) => d.data() as Notification)
+    .sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    )
+    .slice(0, limitCount);
+}
+
+export async function getNotificationById(
+  id: string
+): Promise<Notification | null> {
+  const doc = await notificationsCol.doc(id).get();
+  return doc.exists ? (doc.data() as Notification) : null;
+}
+
+export async function markNotificationRead(id: string): Promise<void> {
+  await notificationsCol.doc(id).update({ read: true });
 }
 
 // ── Internal notes (manager/admin only — never exposed to the employee) ──
@@ -423,5 +515,6 @@ export async function addInternalNote(
     createdAt: new Date().toISOString(),
   };
   await internalNotesCol.doc(id).set(data);
+  await notifyRecipients(leaveId, authorEmail, authorName, comment, true);
   return data;
 }

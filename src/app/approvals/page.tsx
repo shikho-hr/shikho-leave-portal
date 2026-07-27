@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import Navbar from "@/components/Navbar";
 import CommentThread from "@/components/CommentThread";
 import InternalNoteThread from "@/components/InternalNoteThread";
+import Toast from "@/components/Toast";
 import { formatDate, formatDateRange } from "@/lib/leave-calculator";
 
 interface PendingLeave {
@@ -83,6 +84,10 @@ export default function Approvals() {
   const [actionId, setActionId] = useState<string | null>(null);
   const [comments, setComments] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [toast, setToast] = useState<{
+    message: string;
+    type: "success" | "danger";
+  } | null>(null);
   const [filterLeaveType, setFilterLeaveType] = useState("all");
   const [filterStatus, setFilterStatus] = useState("all");
   const [filterDateFrom, setFilterDateFrom] = useState("");
@@ -167,17 +172,36 @@ export default function Approvals() {
         fetch("/api/leaves?view=all")
           .then((r) => r.json())
           .then((d) => setHistoryLeaves(Array.isArray(d) ? d : []));
+        // Tell the Navbar's pending-count badge to refresh immediately —
+        // it otherwise only fetches once on mount and has no other way to
+        // know this action just happened.
+        window.dispatchEvent(new Event("leave-request-updated"));
+        setToast({
+          message:
+            action === "approved"
+              ? "Leave request approved"
+              : "Leave request rejected",
+          type: action === "approved" ? "success" : "danger",
+        });
       } else {
         setErrors((e) => ({
           ...e,
           [leaveId]: data.error || "Failed to update leave",
         }));
+        setToast({
+          message: data.error || "Failed to update leave request",
+          type: "danger",
+        });
       }
     } catch {
       setErrors((e) => ({
         ...e,
         [leaveId]: "Network error. Please try again.",
       }));
+      setToast({
+        message: "Network error — leave request not updated",
+        type: "danger",
+      });
     } finally {
       setActionId(null);
     }
@@ -209,6 +233,13 @@ export default function Approvals() {
   return (
     <div className="min-h-screen bg-gray-50">
       <Navbar />
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast(null)}
+        />
+      )}
       <main className="max-w-3xl mx-auto px-4 py-8">
         <h1 className="text-2xl font-bold text-gray-900 mb-6">
           Leave Requests

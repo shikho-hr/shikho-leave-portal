@@ -17,15 +17,19 @@ interface Note {
 export default function InternalNoteThread({
   leaveId,
   currentUserEmail,
+  initialExpanded = false,
 }: {
   leaveId: string;
   currentUserEmail: string;
+  // Opens already expanded — used by the notification popup when the
+  // notification that opened it was itself about a new internal note.
+  initialExpanded?: boolean;
 }) {
   const [notes, setNotes] = useState<Note[]>([]);
   const [newNote, setNewNote] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(initialExpanded);
 
   const fetchNotes = () => {
     fetch(`/api/leaves/${leaveId}/internal-notes`)

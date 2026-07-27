@@ -8,6 +8,44 @@ import {
 } from "@/lib/db";
 import { isSingleStageApproval } from "@/lib/leave-calculator";
 
+export async function GET(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const user = await getCurrentUser();
+  if (!user)
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  try {
+    const leave = await getLeaveById(params.id);
+    if (!leave) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+
+    const isOwner =
+      leave.employeeEmail.toLowerCase() === user.email.toLowerCase();
+    const isAdmin = user.role === "admin";
+    let isManager = false;
+    if (!isOwner && !isAdmin && user.role === "manager") {
+      const employee = await getEmployeeByEmail(leave.employeeEmail);
+      isManager =
+        employee?.managerEmail?.toLowerCase() === user.email.toLowerCase();
+    }
+
+    if (!isOwner && !isAdmin && !isManager) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    return NextResponse.json(leave);
+  } catch (err) {
+    console.error(err);
+    return NextResponse.json(
+      { error: "Failed to fetch leave" },
+      { status: 500 }
+    );
+  }
+}
+
 export async function PATCH(
   req: NextRequest,
   { params }: { params: { id: string } }

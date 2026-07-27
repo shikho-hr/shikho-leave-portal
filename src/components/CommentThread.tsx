@@ -14,15 +14,26 @@ interface Comment {
 export default function CommentThread({
   leaveId,
   currentUserEmail,
+  hideIfEmpty = false,
+  initialExpanded = false,
 }: {
   leaveId: string;
   currentUserEmail: string;
+  // When true, fetches eagerly on mount (instead of on first expand) so an
+  // empty thread can render nothing at all, rather than a toggle that only
+  // reveals "No comments yet" once clicked. Meant for lists scoped to a
+  // single user's own leaves (e.g. Dashboard), not for wide approval
+  // queues, since it trades the lazy-load for an upfront fetch per row.
+  hideIfEmpty?: boolean;
+  // Opens already expanded — used by the notification popup, where the
+  // whole point of opening it was to read the comment that triggered it.
+  initialExpanded?: boolean;
 }) {
   const [comments, setComments] = useState<Comment[]>([]);
   const [newComment, setNewComment] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(initialExpanded);
 
   const fetchComments = () => {
     fetch(`/api/leaves/${leaveId}/comments`)
@@ -34,7 +45,8 @@ export default function CommentThread({
   };
 
   useEffect(() => {
-    if (expanded) fetchComments();
+    if (expanded || hideIfEmpty) fetchComments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expanded, leaveId]);
 
   const handleSubmit = async () => {
@@ -65,6 +77,8 @@ export default function CommentThread({
       minute: "2-digit",
     });
   };
+
+  if (hideIfEmpty && !loading && comments.length === 0) return null;
 
   return (
     <div className="mt-3">

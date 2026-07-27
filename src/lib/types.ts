@@ -98,6 +98,24 @@ export interface LeaveComment {
   createdAt: string; // ISO datetime
 }
 
+// ── Notifications ───────────────────────────────────────────────
+// One doc per recipient per comment — fanned out to the leave's employee,
+// their manager, and all HR/admins (minus whoever wrote the comment) at
+// comment-creation time. Regular comments only, not internal notes.
+
+export interface Notification {
+  id: string;
+  recipientEmail: string;
+  leaveId: string;
+  leaveType: LeaveType;
+  employeeName: string;
+  commentAuthorName: string;
+  commentPreview: string;
+  isInternalNote: boolean; // true = "Note to HR only" — never sent to the employee
+  read: boolean;
+  createdAt: string; // ISO datetime
+}
+
 // ── Holidays ────────────────────────────────────────────────────
 
 export interface Holiday {

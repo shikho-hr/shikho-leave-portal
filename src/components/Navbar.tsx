@@ -4,6 +4,7 @@ import { useAuth } from "@/lib/AuthContext";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+import NotificationBell from "./NotificationBell";
 
 export default function Navbar() {
   const { user, signOutUser } = useAuth();
@@ -14,23 +15,34 @@ export default function Navbar() {
   useEffect(() => {
     if (role !== "manager" && role !== "admin") return;
 
-    const fetches: Promise<unknown>[] = [
-      fetch("/api/leaves?view=pending").then((r) => r.json()),
-    ];
-    // Admins/HR also have a second queue (requests manager-approved and
-    // awaiting HR's final sign-off) that counts toward "do I have anything
-    // pending" just as much as the manager-stage queue does.
-    if (role === "admin") {
-      fetches.push(fetch("/api/leaves?view=hr").then((r) => r.json()));
-    }
+    const fetchPendingCount = () => {
+      const fetches: Promise<unknown>[] = [
+        fetch("/api/leaves?view=pending").then((r) => r.json()),
+      ];
+      // Admins/HR also have a second queue (requests manager-approved and
+      // awaiting HR's final sign-off) that counts toward "do I have anything
+      // pending" just as much as the manager-stage queue does.
+      if (role === "admin") {
+        fetches.push(fetch("/api/leaves?view=hr").then((r) => r.json()));
+      }
 
-    Promise.all(fetches).then((results) => {
-      const total = results.reduce(
-        (sum: number, data) => sum + (Array.isArray(data) ? data.length : 0),
-        0
-      );
-      setPendingCount(total);
-    });
+      Promise.all(fetches).then((results) => {
+        const total = results.reduce(
+          (sum: number, data) => sum + (Array.isArray(data) ? data.length : 0),
+          0
+        );
+        setPendingCount(total);
+      });
+    };
+
+    fetchPendingCount();
+    // Fired by the Approvals page right after a manager/HR approves or
+    // rejects a request, so the badge updates live without a page
+    // navigation — the Navbar instance otherwise never re-fetches on its
+    // own once mounted.
+    window.addEventListener("leave-request-updated", fetchPendingCount);
+    return () =>
+      window.removeEventListener("leave-request-updated", fetchPendingCount);
   }, [role]);
 
   const pendingCountLabel = pendingCount >= 10 ? "9+" : String(pendingCount);
@@ -92,6 +104,9 @@ export default function Navbar() {
           </div>
 
           <div className="flex items-center gap-3">
+            {user?.email && (
+              <NotificationBell currentUserEmail={user.email} />
+            )}
             <span className="text-sm text-indigo-200 hidden sm:block">
               {user?.name}
             </span>

@@ -600,6 +600,7 @@ export default function Dashboard() {
                           <CommentThread
                             leaveId={leave.id}
                             currentUserEmail={user?.email || ""}
+                            hideIfEmpty
                           />
                         </td>
                       </tr>
