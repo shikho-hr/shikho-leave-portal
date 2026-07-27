@@ -58,6 +58,27 @@ export async function getEmployeeNamesByEmails(
   return map;
 }
 
+// Resolves a small set of employee emails to departments for the analytics
+// view — leave docs don't carry a department, so it's joined in from the
+// employee doc. Direct doc gets (doc ID = lowercase email), same reasoning
+// as getEmployeeNamesByEmails: cost scales with the handful of employees on
+// leave that week, not the whole roster.
+export async function getEmployeeDepartmentsByEmails(
+  emails: string[]
+): Promise<Map<string, string>> {
+  const unique = Array.from(
+    new Set(emails.filter(Boolean).map((e) => e.toLowerCase()))
+  );
+  const docs = await Promise.all(
+    unique.map((email) => employeesCol.doc(email).get())
+  );
+  const map = new Map<string, string>();
+  docs.forEach((doc, i) => {
+    if (doc.exists) map.set(unique[i], (doc.data() as Employee).department);
+  });
+  return map;
+}
+
 export async function getEmployeesByManager(
   managerEmail: string
 ): Promise<Employee[]> {
@@ -87,6 +108,16 @@ export async function upsertEmployeesFromSheet(
 export async function getHolidays(): Promise<Holiday[]> {
   const snap = await holidaysCol.get();
   return snap.docs.map((d) => d.data() as Holiday);
+}
+
+// Membership check for a specific handful of dates (doc ID = the date
+// string) — direct doc gets instead of scanning the whole collection.
+// Returns the subset of the given dates that are holidays.
+export async function getHolidaysByDates(
+  dates: string[]
+): Promise<Set<string>> {
+  const docs = await Promise.all(dates.map((d) => holidaysCol.doc(d).get()));
+  return new Set(docs.filter((d) => d.exists).map((d) => d.id));
 }
 
 // Upsert holidays pulled from the Google Sheet roster (doc ID = the date
@@ -364,6 +395,24 @@ export async function getAllApprovedLeavesGroupedByEmployee(): Promise<
     grouped.set(leave.employeeEmail, list);
   });
   return grouped;
+}
+
+// Approved leaves whose date range overlaps [rangeStart, rangeEnd] — used
+// by the analytics weekday chart. Multi-field range query (needs the
+// (status, endDate, startDate) composite index in firestore.indexes.json —
+// deploy it or this throws). String comparison is safe: dates are
+// "YYYY-MM-DD". Reads only overlapping docs, so it stays cheap even after
+// the historical import grows the collection.
+export async function getApprovedLeavesOverlapping(
+  rangeStart: string,
+  rangeEnd: string
+): Promise<LeaveRequest[]> {
+  const snap = await leavesCol
+    .where("status", "==", "approved")
+    .where("startDate", "<=", rangeEnd)
+    .where("endDate", ">=", rangeStart)
+    .get();
+  return snap.docs.map((d) => d.data() as LeaveRequest);
 }
 
 // ── Leave Comments ─────────────────────────────────────────────

@@ -63,6 +63,9 @@ export default function Navbar() {
     ...(role === "manager" || role === "admin"
       ? [{ href: "/admin", label: "Team Details" }]
       : []),
+    // Admin-only, unlike the manager-visible entries above — the analytics
+    // view spans every department.
+    ...(role === "admin" ? [{ href: "/analytics", label: "Analytics" }] : []),
   ];
 
   return (
