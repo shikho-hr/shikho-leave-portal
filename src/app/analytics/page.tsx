@@ -517,23 +517,40 @@ export default function AnalyticsPage() {
                   cursor={{ fill: "#eef2ff" }}
                 />
                 {isStacked ? (
-                  series.map((s, i) => (
+                  <>
+                    {series.map((s, i) => (
+                      <Bar
+                        key={s.key}
+                        dataKey={(d: ChartDatum) => d.byDept[s.key] || 0}
+                        name={s.name}
+                        stackId="leaves"
+                        fill={s.color}
+                        stroke="#ffffff"
+                        strokeWidth={2}
+                        radius={i === series.length - 1 ? [4, 4, 0, 0] : 0}
+                        maxBarSize={72}
+                      />
+                    ))}
+                    {/* Recharts skips drawing (and thus labeling) a stacked
+                        segment on any day that specific department has zero
+                        leaves — which happens most days for most departments.
+                        A tiny always-nonzero sentinel segment on top of the
+                        stack guarantees a rectangle to hang the total label
+                        on, regardless of which real department is 0 that
+                        day. The added height (0.01) is sub-pixel and never
+                        visible. */}
                     <Bar
-                      key={s.key}
-                      dataKey={(d: ChartDatum) => d.byDept[s.key] || 0}
-                      name={s.name}
+                      key="_stackTotal"
+                      dataKey={() => 0.01}
                       stackId="leaves"
-                      fill={s.color}
-                      stroke="#ffffff"
-                      strokeWidth={2}
-                      radius={i === series.length - 1 ? [4, 4, 0, 0] : 0}
-                      maxBarSize={72}
+                      fill="transparent"
+                      stroke="none"
+                      isAnimationActive={false}
+                      legendType="none"
                     >
-                      {i === series.length - 1 && (
-                        <LabelList content={<StackTotalLabel data={chartData} />} />
-                      )}
+                      <LabelList content={<StackTotalLabel data={chartData} />} />
                     </Bar>
-                  ))
+                  </>
                 ) : (
                   <Bar
                     dataKey="count"
