@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import LeavePopup from "./LeavePopup";
 
 interface NotificationItem {
@@ -11,6 +12,7 @@ interface NotificationItem {
   commentAuthorName: string;
   commentPreview: string;
   isInternalNote: boolean;
+  isSubmission: boolean;
   read: boolean;
   createdAt: string;
 }
@@ -43,6 +45,7 @@ export default function NotificationBell({
 }: {
   currentUserEmail: string;
 }) {
+  const router = useRouter();
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [open, setOpen] = useState(false);
   const [activeNotification, setActiveNotification] =
@@ -74,7 +77,6 @@ export default function NotificationBell({
 
   const handleClickNotification = (n: NotificationItem) => {
     setOpen(false);
-    setActiveNotification(n);
     if (!n.read) {
       fetch(`/api/notifications/${n.id}`, { method: "PATCH" }).then(() => {
         setNotifications((prev) =>
@@ -82,6 +84,15 @@ export default function NotificationBell({
         );
       });
     }
+
+    // A new submission belongs in the Manager Approval queue, not the
+    // picture-in-picture popup — that's reserved for comments/internal
+    // notes, where reading the message in place is the point.
+    if (n.isSubmission) {
+      router.push(`/approvals?tab=pending&highlight=${n.leaveId}`);
+      return;
+    }
+    setActiveNotification(n);
   };
 
   return (
@@ -136,11 +147,20 @@ export default function NotificationBell({
                         <span className="font-semibold">
                           {n.commentAuthorName}
                         </span>{" "}
-                        {n.isInternalNote
-                          ? "added an internal note on"
-                          : "commented on"}{" "}
-                        {n.employeeName}&apos;s{" "}
-                        {TYPE_LABELS[n.leaveType] || n.leaveType}
+                        {n.isSubmission ? (
+                          <>
+                            has submitted a new{" "}
+                            {TYPE_LABELS[n.leaveType] || n.leaveType} request
+                          </>
+                        ) : (
+                          <>
+                            {n.isInternalNote
+                              ? "added an internal note on"
+                              : "commented on"}{" "}
+                            {n.employeeName}&apos;s{" "}
+                            {TYPE_LABELS[n.leaveType] || n.leaveType}
+                          </>
+                        )}
                         {n.isInternalNote && (
                           <span className="ml-1.5 text-[10px] font-semibold text-yellow-700 bg-sunrise/10 px-1.5 py-0.5 rounded align-middle">
                             HR only

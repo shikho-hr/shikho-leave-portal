@@ -201,9 +201,11 @@ export async function POST(req: NextRequest) {
     });
 
     // Auto-add the reason as the first comment (skip if left blank for a
-    // reason-optional type, to avoid creating an empty comment)
+    // reason-optional type, to avoid creating an empty comment). Flagged
+    // as a submission so recipients see "X submitted a new leave request"
+    // rather than a generic comment notification.
     if (reason) {
-      await addComment(id, user.email, employee.name, reason);
+      await addComment(id, user.email, employee.name, reason, true);
     }
 
     return NextResponse.json({ id, message: "Leave request submitted" });

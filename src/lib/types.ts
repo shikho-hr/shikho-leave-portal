@@ -112,6 +112,8 @@ export interface Notification {
   commentAuthorName: string;
   commentPreview: string;
   isInternalNote: boolean; // true = "Note to HR only" — never sent to the employee
+  isSubmission: boolean; // true = the auto-added reason comment from a brand-new
+  // leave application — rendered as "X submitted a new Y request", not "X commented"
   read: boolean;
   createdAt: string; // ISO datetime
 }

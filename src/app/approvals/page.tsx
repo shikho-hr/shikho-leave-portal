@@ -1,8 +1,8 @@
 "use client";
 
 import { useAuth } from "@/lib/AuthContext";
-import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
 import Navbar from "@/components/Navbar";
 import CommentThread from "@/components/CommentThread";
 import InternalNoteThread from "@/components/InternalNoteThread";
@@ -74,9 +74,19 @@ const blockDatePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
 };
 
 export default function Approvals() {
+  return (
+    <Suspense fallback={null}>
+      <ApprovalsContent />
+    </Suspense>
+  );
+}
+
+function ApprovalsContent() {
   const { user, status } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [tab, setTab] = useState<"pending" | "hr" | "history">("pending");
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const [pendingLeaves, setPendingLeaves] = useState<PendingLeave[]>([]);
   const [hrLeaves, setHrLeaves] = useState<PendingLeave[]>([]);
   const [historyLeaves, setHistoryLeaves] = useState<PendingLeave[]>([]);
@@ -101,6 +111,30 @@ export default function Approvals() {
       router.replace("/dashboard");
     }
   }, [status, user, router]);
+
+  // Deep-link from a "new submission" notification: ?tab=pending jumps
+  // straight to the right queue, ?highlight=<leaveId> briefly flashes that
+  // specific card so it's obvious which one the notification was about.
+  useEffect(() => {
+    const tabParam = searchParams.get("tab");
+    if (tabParam === "pending" || tabParam === "hr" || tabParam === "history") {
+      setTab(tabParam);
+    }
+
+    const highlight = searchParams.get("highlight");
+    if (!highlight) return;
+    setHighlightedId(highlight);
+    const scrollTimer = setTimeout(() => {
+      document
+        .getElementById(`leave-${highlight}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 150);
+    const clearTimer = setTimeout(() => setHighlightedId(null), 1500);
+    return () => {
+      clearTimeout(scrollTimer);
+      clearTimeout(clearTimer);
+    };
+  }, [searchParams]);
 
   const fetchLeaves = () => {
     const fetches: Promise<void>[] = [
@@ -128,7 +162,15 @@ export default function Approvals() {
   };
 
   useEffect(() => {
-    if (user) fetchLeaves();
+    if (!user) return;
+    fetchLeaves();
+    // Polling, same as the Notification Bell and nav badge — this page
+    // otherwise only ever fetches once on load, so a request submitted or
+    // actioned by someone else while you're sitting on this page wouldn't
+    // show up until a manual refresh.
+    const interval = setInterval(fetchLeaves, 30000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   const handleAction = async (
@@ -364,7 +406,12 @@ export default function Approvals() {
             {filteredLeaves.map((leave) => (
               <div
                 key={leave.id}
-                className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm"
+                id={`leave-${leave.id}`}
+                className={`bg-white rounded-2xl border p-5 shadow-sm transition-colors duration-700 ${
+                  highlightedId === leave.id
+                    ? "border-indigo-400 bg-indigo-50/70 ring-2 ring-indigo-300"
+                    : "border-gray-100"
+                }`}
               >
                 <div className="flex items-start justify-between mb-3">
                   <div>

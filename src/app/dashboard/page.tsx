@@ -135,6 +135,19 @@ const CARD_ACCENTS = [
 // (Marriage, Paternity, etc.) always shows remaining balance regardless.
 const GENERAL_LEAVE_TYPES = ["sick", "casual", "annual"];
 
+// Fixed display order for Special Leave cards — filtered down to whichever
+// types the employee actually has (already gender-scoped via
+// getAvailableLeaveTypes), so this same order naturally yields
+// Compassionate/Ladies WFH/Marriage + Maternity on a second row for women,
+// and Compassionate/Marriage/Paternity with no second row for men.
+const SPECIAL_LEAVE_ORDER = [
+  "compassionate",
+  "ladies_wfh",
+  "marriage",
+  "paternity",
+  "maternity",
+];
+
 // Years to offer in the history dropdown — derived from years the employee
 // actually has approved General Leave records in, not a fixed lookback
 // window, so it naturally covers however far their history actually goes
@@ -187,7 +200,7 @@ export default function Dashboard() {
   const [balanceView, setBalanceView] = useState<"remaining" | "taken">(
     "remaining"
   );
-  const [historyType, setHistoryType] = useState("sick");
+  const [historyType, setHistoryType] = useState("all");
   const [historyYear, setHistoryYear] = useState("lifetime");
 
   useEffect(() => {
@@ -253,6 +266,14 @@ export default function Dashboard() {
           const secondaryTypes = availableTypes.filter(
             (t) => !primaryTypes.includes(t) && !excluded.includes(t)
           );
+          const orderedSecondaryTypes = [
+            ...SPECIAL_LEAVE_ORDER.filter((t) => secondaryTypes.includes(t)),
+            ...secondaryTypes.filter((t) => !SPECIAL_LEAVE_ORDER.includes(t)),
+          ];
+          // Taken tab's Special Leave sits in the narrower General Leave
+          // column, so it splits at 3-per-row instead of one long row.
+          const specialLeaveRow1 = orderedSecondaryTypes.slice(0, 3);
+          const specialLeaveRow2 = orderedSecondaryTypes.slice(3);
 
           const renderCard = (type: string, i: number, compact = false) => {
             const usedUpThisMonth =
@@ -280,13 +301,6 @@ export default function Dashboard() {
                   ? balance.used[type] ?? 0
                   : balance.remaining[type] ?? 0}
               </p>
-              {/* General Leave cards skip this — the Remaining/Taken toggle
-                  already surfaces the other number, so it'd be redundant */}
-              {!isGeneralLeave && (
-                <p className="text-xs text-gray-400 mt-1">
-                  {balance.used[type] ?? 0} used of {balance.entitled[type] ?? 0}
-                </p>
-              )}
             </div>
             );
           };
@@ -295,7 +309,9 @@ export default function Dashboard() {
           const historyLeaves = leaves
             .filter(
               (l) =>
-                l.leaveType === historyType &&
+                (historyType === "all"
+                  ? GENERAL_LEAVE_TYPES.includes(l.leaveType)
+                  : l.leaveType === historyType) &&
                 l.status === "approved" &&
                 daysInYear(l, historyYear) > 0
             )
@@ -342,6 +358,22 @@ export default function Dashboard() {
                   <div className="flex flex-wrap gap-4">
                     {primaryTypes.map((type, i) => renderCard(type, i, true))}
                   </div>
+
+                  {balanceView === "taken" && (
+                    <div className="mt-6">
+                      <h3 className="text-lg font-bold text-gray-500 mb-3">
+                        Special Leave
+                      </h3>
+                      <div className="flex flex-wrap gap-4">
+                        {specialLeaveRow1.map((type, i) => renderCard(type, i, true))}
+                      </div>
+                      {specialLeaveRow2.length > 0 && (
+                        <div className="flex flex-wrap gap-4 mt-4">
+                          {specialLeaveRow2.map((type, i) => renderCard(type, i, true))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
                 {balanceView === "remaining" && (
                   <div>
@@ -349,7 +381,7 @@ export default function Dashboard() {
                       Special Leave
                     </h3>
                     <div className="flex flex-wrap gap-4">
-                      {secondaryTypes.map((type, i) => renderCard(type, i, true))}
+                      {orderedSecondaryTypes.map((type, i) => renderCard(type, i, true))}
                     </div>
                   </div>
                 )}
@@ -362,6 +394,7 @@ export default function Dashboard() {
                         onChange={(e) => setHistoryType(e.target.value)}
                         className="border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white"
                       >
+                        <option value="all">All Leaves</option>
                         {primaryTypes.map((type) => (
                           <option key={type} value={type}>
                             {TYPE_LABELS[type] || type}
@@ -383,7 +416,11 @@ export default function Dashboard() {
                     <div className="max-w-xl bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
                       {historyLeaves.length === 0 ? (
                         <p className="p-6 text-center text-sm text-gray-400">
-                          No {TYPE_LABELS[historyType] || historyType} taken
+                          No{" "}
+                          {historyType === "all"
+                            ? "leaves"
+                            : TYPE_LABELS[historyType] || historyType}{" "}
+                          taken
                           {historyYear === "lifetime" ? "" : ` in ${historyYear}`}
                         </p>
                       ) : (
@@ -393,7 +430,14 @@ export default function Dashboard() {
                             taken
                             {historyYear === "lifetime" ? "" : ` in ${historyYear}`}
                           </div>
-                          <div className="grid grid-cols-[1.4fr_1fr_0.6fr] gap-3 px-4 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wide border-b border-gray-100">
+                          <div
+                            className={`grid gap-3 px-4 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wide border-b border-gray-100 ${
+                              historyType === "all"
+                                ? "grid-cols-[0.8fr_1.2fr_1fr_0.6fr]"
+                                : "grid-cols-[1.4fr_1fr_0.6fr]"
+                            }`}
+                          >
+                            {historyType === "all" && <span>Type</span>}
                             <span>Dates</span>
                             <span>Applied On</span>
                             <span className="text-right">Days</span>
@@ -402,8 +446,17 @@ export default function Dashboard() {
                             {historyLeaves.map((l) => (
                               <div
                                 key={l.id}
-                                className="grid grid-cols-[1.4fr_1fr_0.6fr] gap-3 items-center px-4 py-3 text-sm"
+                                className={`grid gap-3 items-center px-4 py-3 text-sm ${
+                                  historyType === "all"
+                                    ? "grid-cols-[0.8fr_1.2fr_1fr_0.6fr]"
+                                    : "grid-cols-[1.4fr_1fr_0.6fr]"
+                                }`}
                               >
+                                {historyType === "all" && (
+                                  <span className="text-gray-600">
+                                    {TYPE_LABELS[l.leaveType] || l.leaveType}
+                                  </span>
+                                )}
                                 <span className="font-medium">
                                   {formatDateRange(l.startDate, l.endDate)}
                                 </span>

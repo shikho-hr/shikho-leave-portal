@@ -382,7 +382,8 @@ export async function addComment(
   leaveId: string,
   authorEmail: string,
   authorName: string,
-  comment: string
+  comment: string,
+  isSubmission = false
 ): Promise<LeaveComment> {
   const id = `CMT-${Date.now()}`;
   const data: LeaveComment = {
@@ -394,7 +395,7 @@ export async function addComment(
     createdAt: new Date().toISOString(),
   };
   await commentsCol.doc(id).set(data);
-  await notifyRecipients(leaveId, authorEmail, authorName, comment, false);
+  await notifyRecipients(leaveId, authorEmail, authorName, comment, false, isSubmission);
   return data;
 }
 
@@ -403,15 +404,20 @@ export async function addComment(
 // Regular comments go to the employee, their manager, and every HR/admin.
 // Internal notes go to the manager and HR/admins only — the employee is
 // deliberately never a recipient, matching internalNotes' own visibility
-// rule ("never exposed to the employee"). Best-effort: a missing
-// leave/employee record just means fewer recipients, never a thrown error,
-// since a notification failing to send shouldn't block the comment itself.
+// rule ("never exposed to the employee"). isSubmission marks the one
+// special case: the reason auto-added as a leave's first comment, which
+// reads to recipients as "X submitted a new leave request" rather than
+// "X commented" — same recipients/mechanics as a regular comment, just a
+// different notification framing. Best-effort: a missing leave/employee
+// record just means fewer recipients, never a thrown error, since a
+// notification failing to send shouldn't block the comment itself.
 async function notifyRecipients(
   leaveId: string,
   authorEmail: string,
   authorName: string,
   commentText: string,
-  isInternalNote: boolean
+  isInternalNote: boolean,
+  isSubmission = false
 ): Promise<void> {
   const leave = await getLeaveById(leaveId);
   if (!leave) return;
@@ -447,6 +453,7 @@ async function notifyRecipients(
       commentAuthorName: authorName,
       commentPreview: commentText.slice(0, 140),
       isInternalNote,
+      isSubmission,
       read: false,
       createdAt,
     };
