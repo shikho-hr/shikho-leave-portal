@@ -52,6 +52,24 @@ const LEAVE_TYPE_OPTIONS = Object.keys(TYPE_LABELS).filter(
   (t) => t !== "unpaid"
 );
 
+// Validated 8-hue categorical palette (fixed order — the order itself is
+// the colorblind-safety mechanism, never cycled or re-sorted by value).
+// A department's slot is assigned once per week from its alphabetical rank
+// among departments actually present that week, so a filter that removes
+// rows never repaints the departments that remain visible.
+const CATEGORICAL_PALETTE = [
+  "#2a78d6", // blue
+  "#eb6834", // orange
+  "#1baf7a", // aqua
+  "#eda100", // yellow
+  "#e87ba4", // magenta
+  "#008300", // green
+  "#4a3aa7", // violet
+  "#e34948", // red
+];
+const OTHER_COLOR = "#898781"; // muted ink — reserved, outside the categorical set
+const SINGLE_SERIES_COLOR = "#4f46e5"; // brand indigo, used only when one series is on screen
+
 // Dates must be picked via the calendar UI, not typed — avoids mm/dd vs
 // dd/mm ambiguity from manual keyboard entry. Tab is still allowed through
 // for keyboard focus navigation.
@@ -71,6 +89,14 @@ interface ChartDatum {
   dayLabel: string;
   count: number;
   isHoliday: boolean;
+  byDept: Record<string, number>;
+}
+
+interface Series {
+  key: string;
+  name: string;
+  color: string;
+  title?: string;
 }
 
 // Two-line tick: weekday on top, date underneath; holidays greyed out and
@@ -111,28 +137,94 @@ function DayTick({
   );
 }
 
+// Renders the segment-by-segment breakdown when the bar is stacked by
+// department, or a single "N employees" line when it isn't.
 function ChartTooltip({
   active,
   payload,
+  isStacked,
 }: {
   active?: boolean;
-  payload?: { payload: ChartDatum }[];
+  payload?: { payload: ChartDatum; dataKey?: string; color?: string }[];
+  isStacked: boolean;
 }) {
   if (!active || !payload?.length) return null;
   const d = payload[0].payload;
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-md px-3 py-2 text-sm">
+    <div className="bg-white rounded-xl border border-gray-200 shadow-md px-3 py-2 text-sm min-w-[160px]">
       <p className="font-semibold text-gray-900">
         {d.weekday}, {d.dayLabel}
       </p>
       {d.isHoliday ? (
         <p className="text-gray-500">Holiday — office closed</p>
+      ) : isStacked ? (
+        <>
+          <ul className="mt-1 space-y-0.5">
+            {payload
+              .filter((p) => p.dataKey && (d.byDept[p.dataKey] || 0) > 0)
+              .map((p) => (
+                <li
+                  key={p.dataKey}
+                  className="flex items-center justify-between gap-4 text-gray-600"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <span
+                      className="inline-block w-2 h-2 rounded-full"
+                      style={{ backgroundColor: p.color }}
+                    />
+                    {(p as { name?: string }).name}
+                  </span>
+                  <span className="font-semibold text-gray-900">
+                    {d.byDept[p.dataKey!]}
+                  </span>
+                </li>
+              ))}
+          </ul>
+          <p className="mt-1 pt-1 border-t border-gray-100 flex items-center justify-between font-semibold text-gray-900">
+            <span>Total</span>
+            <span>{d.count}</span>
+          </p>
+        </>
       ) : (
         <p className="text-gray-600">
           {d.count} employee{d.count === 1 ? "" : "s"} on leave
         </p>
       )}
     </div>
+  );
+}
+
+// Custom LabelList content for the topmost stacked segment — labels the
+// whole stack's total (from the datum), not just that segment's own value,
+// so "6" appears once above the bar instead of once per department.
+function StackTotalLabel({
+  x,
+  y,
+  width,
+  index,
+  data,
+}: {
+  x?: number;
+  y?: number;
+  width?: number;
+  index?: number;
+  data: ChartDatum[];
+}) {
+  if (x === undefined || y === undefined || width === undefined || index === undefined)
+    return null;
+  const total = data[index]?.count || 0;
+  if (total === 0) return null;
+  return (
+    <text
+      x={x + width / 2}
+      y={y - 8}
+      textAnchor="middle"
+      fill="#374151"
+      fontSize={12}
+      fontWeight={600}
+    >
+      {total}
+    </text>
   );
 }
 
@@ -184,6 +276,37 @@ export default function AnalyticsPage() {
     }
   }, [departments, filterDept]);
 
+  // Stacking only applies to the "All Departments" view — once a single
+  // department is selected the bar collapses to one series, same as before.
+  const isStacked = filterDept === "all" && departments.length > 0;
+
+  // Fixed 8-color cap (dataviz method: a 9th series folds into "Other"
+  // rather than generating a 9th hue). Assigned from this week's alphabetical
+  // department order, which only changes across weeks, never when the leave
+  // type filter removes rows within the current week — so a department's
+  // color never shifts just because a sibling bar disappeared.
+  const explicitDepts = departments.slice(0, 8);
+  const series: Series[] = useMemo(() => {
+    if (!isStacked) return [];
+    const overflowNamed = departments.slice(8);
+    const hasUnassigned = (data?.rows || []).some((r) => !r.department);
+    const overflowLabel = [...overflowNamed, ...(hasUnassigned ? ["Unassigned"] : [])];
+    const list: Series[] = explicitDepts.map((name, i) => ({
+      key: `dept${i}`,
+      name,
+      color: CATEGORICAL_PALETTE[i],
+    }));
+    if (overflowLabel.length > 0) {
+      list.push({
+        key: "other",
+        name: "Other",
+        color: OTHER_COLOR,
+        title: `Includes: ${overflowLabel.join(", ")}`,
+      });
+    }
+    return list;
+  }, [isStacked, explicitDepts, departments, data]);
+
   const chartData: ChartDatum[] = useMemo(() => {
     if (!data) return [];
     return data.days.map((date) => {
@@ -193,6 +316,19 @@ export default function AnalyticsPage() {
           (filterDept === "all" || r.department === filterDept) &&
           (filterLeaveType === "all" || r.leaveType === filterLeaveType)
       );
+      const byDept: Record<string, number> = {};
+      if (isStacked) {
+        explicitDepts.forEach((name, i) => {
+          byDept[`dept${i}`] = new Set(
+            dayRows.filter((r) => r.department === name).map((r) => r.employeeEmail)
+          ).size;
+        });
+        byDept.other = new Set(
+          dayRows
+            .filter((r) => !explicitDepts.includes(r.department))
+            .map((r) => r.employeeEmail)
+        ).size;
+      }
       return {
         date,
         weekday: format(parseISO(date), "EEE"),
@@ -201,9 +337,10 @@ export default function AnalyticsPage() {
         // still mean one person out.
         count: new Set(dayRows.map((r) => r.employeeEmail)).size,
         isHoliday: data.holidays.includes(date),
+        byDept,
       };
     });
-  }, [data, filterDept, filterLeaveType]);
+  }, [data, filterDept, filterLeaveType, isStacked, explicitDepts]);
 
   const weekTotal = useMemo(
     () =>
@@ -376,28 +513,65 @@ export default function AnalyticsPage() {
                   domain={[0, (dataMax: number) => Math.max(dataMax, 4)]}
                 />
                 <Tooltip
-                  content={<ChartTooltip />}
+                  content={<ChartTooltip isStacked={isStacked} />}
                   cursor={{ fill: "#eef2ff" }}
                 />
-                <Bar
-                  dataKey="count"
-                  fill="#4f46e5"
-                  radius={[4, 4, 0, 0]}
-                  maxBarSize={72}
-                >
-                  {/* Zero stays unlabeled — a "0" over every empty day is
-                      noise, and holidays already say so in the axis */}
-                  <LabelList
+                {isStacked ? (
+                  series.map((s, i) => (
+                    <Bar
+                      key={s.key}
+                      dataKey={(d: ChartDatum) => d.byDept[s.key] || 0}
+                      name={s.name}
+                      stackId="leaves"
+                      fill={s.color}
+                      stroke="#ffffff"
+                      strokeWidth={2}
+                      radius={i === series.length - 1 ? [4, 4, 0, 0] : 0}
+                      maxBarSize={72}
+                    >
+                      {i === series.length - 1 && (
+                        <LabelList content={<StackTotalLabel data={chartData} />} />
+                      )}
+                    </Bar>
+                  ))
+                ) : (
+                  <Bar
                     dataKey="count"
-                    position="top"
-                    formatter={(v: unknown) => (Number(v) > 0 ? String(v) : "")}
-                    fill="#374151"
-                    fontSize={12}
-                    fontWeight={600}
-                  />
-                </Bar>
+                    fill={SINGLE_SERIES_COLOR}
+                    radius={[4, 4, 0, 0]}
+                    maxBarSize={72}
+                  >
+                    {/* Zero stays unlabeled — a "0" over every empty day is
+                        noise, and holidays already say so in the axis */}
+                    <LabelList
+                      dataKey="count"
+                      position="top"
+                      formatter={(v: unknown) => (Number(v) > 0 ? String(v) : "")}
+                      fill="#374151"
+                      fontSize={12}
+                      fontWeight={600}
+                    />
+                  </Bar>
+                )}
               </BarChart>
             </ResponsiveContainer>
+            {isStacked && series.length > 1 && (
+              <div className="flex flex-wrap gap-x-4 gap-y-1.5 mt-3 pt-3 border-t border-gray-50">
+                {series.map((s) => (
+                  <span
+                    key={s.key}
+                    className="flex items-center gap-1.5 text-xs text-gray-600"
+                    title={s.title}
+                  >
+                    <span
+                      className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
+                      style={{ backgroundColor: s.color }}
+                    />
+                    {s.name}
+                  </span>
+                ))}
+              </div>
+            )}
             {data && data.holidays.length > 0 && (
               <p className="text-xs text-gray-400 mt-2">
                 Holiday{data.holidays.length === 1 ? "" : "s"} this week:{" "}
