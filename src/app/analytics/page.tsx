@@ -10,6 +10,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  LabelList,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -353,7 +354,7 @@ export default function AnalyticsPage() {
             <ResponsiveContainer width="100%" height={340}>
               <BarChart
                 data={chartData}
-                margin={{ top: 8, right: 8, left: -16, bottom: 12 }}
+                margin={{ top: 20, right: 8, left: -16, bottom: 12 }}
               >
                 <CartesianGrid
                   vertical={false}
@@ -383,7 +384,18 @@ export default function AnalyticsPage() {
                   fill="#4f46e5"
                   radius={[4, 4, 0, 0]}
                   maxBarSize={72}
-                />
+                >
+                  {/* Zero stays unlabeled — a "0" over every empty day is
+                      noise, and holidays already say so in the axis */}
+                  <LabelList
+                    dataKey="count"
+                    position="top"
+                    formatter={(v: unknown) => (Number(v) > 0 ? String(v) : "")}
+                    fill="#374151"
+                    fontSize={12}
+                    fontWeight={600}
+                  />
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
             {data && data.holidays.length > 0 && (
