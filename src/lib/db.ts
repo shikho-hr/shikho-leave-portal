@@ -244,11 +244,21 @@ export async function getPendingLeavesForManager(
   const reporteeEmails = reportees.map((e) => e.email);
   if (reporteeEmails.length === 0) return [];
 
-  const snap = await leavesCol
-    .where("status", "==", "pending")
-    .where("employeeEmail", "in", reporteeEmails.slice(0, 30))
-    .get();
-  return snap.docs.map((d) => d.data() as LeaveRequest);
+  // Chunked (not reporteeEmails.slice(0, 30)) so a manager with 30+
+  // reportees doesn't silently lose part of their team's queue — same
+  // pattern as getLeavesByEmployees. Sorted in memory rather than via
+  // .orderBy() to avoid needing a new composite index for "in" + orderBy on
+  // a different field.
+  const results = await Promise.all(
+    chunk30(reporteeEmails).map((c) =>
+      leavesCol.where("status", "==", "pending").where("employeeEmail", "in", c).get()
+    )
+  );
+  return results
+    .flatMap((snap) => snap.docs.map((d) => d.data() as LeaveRequest))
+    .sort(
+      (a, b) => new Date(b.appliedOn).getTime() - new Date(a.appliedOn).getTime()
+    );
 }
 
 // Leaves awaiting HR approval (non-tele-sales, manager already approved)
