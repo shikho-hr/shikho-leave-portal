@@ -131,8 +131,10 @@ const CARD_ACCENTS = [
   "border-l-green-500",
 ];
 
-// The Remaining/Taken toggle only applies to these three — Special Leave
-// (Marriage, Paternity, etc.) always shows remaining balance regardless.
+// Types shown under the "General Leave" heading/column — Special Leave
+// (Marriage, Paternity, etc.) gets its own heading below, computed
+// per-employee inside the component since it depends on gender/type
+// eligibility (see orderedSecondaryTypes).
 const GENERAL_LEAVE_TYPES = ["sick", "casual", "annual"];
 
 // Fixed display order for Special Leave cards — filtered down to whichever
@@ -149,14 +151,15 @@ const SPECIAL_LEAVE_ORDER = [
 ];
 
 // Years to offer in the history dropdown — derived from years the employee
-// actually has approved General Leave records in, not a fixed lookback
-// window, so it naturally covers however far their history actually goes
-// (and never shows an empty year with nothing to find). Current year is
-// always included even with zero records yet.
-function getYearOptions(leaves: Leave[]): string[] {
+// actually has approved records in (across whichever leave types the
+// history panel currently covers), not a fixed lookback window, so it
+// naturally covers however far their history actually goes (and never
+// shows an empty year with nothing to find). Current year is always
+// included even with zero records yet.
+function getYearOptions(leaves: Leave[], includedTypes: string[]): string[] {
   const years = new Set<string>([String(new Date().getFullYear())]);
   for (const l of leaves) {
-    if (!GENERAL_LEAVE_TYPES.includes(l.leaveType) || l.status !== "approved") {
+    if (!includedTypes.includes(l.leaveType) || l.status !== "approved") {
       continue;
     }
     if (l.daysByYear) {
@@ -260,7 +263,7 @@ export default function Dashboard() {
         </h2>
         {(() => {
           const excluded = ["wfh", "unpaid", "compensatory"];
-          const primaryTypes = ["sick", "casual", "annual"].filter((t) =>
+          const primaryTypes = GENERAL_LEAVE_TYPES.filter((t) =>
             availableTypes.includes(t)
           );
           const secondaryTypes = availableTypes.filter(
@@ -274,6 +277,10 @@ export default function Dashboard() {
           // column, so it splits at 3-per-row instead of one long row.
           const specialLeaveRow1 = orderedSecondaryTypes.slice(0, 3);
           const specialLeaveRow2 = orderedSecondaryTypes.slice(3);
+          // Every type with a Taken-tab card, in card order — the history
+          // panel's "All Leaves" and Type dropdown cover exactly this set,
+          // so anything shown as "taken" up top can be found in the table.
+          const allTakenTypes = [...primaryTypes, ...orderedSecondaryTypes];
 
           const renderCard = (type: string, i: number, compact = false) => {
             const usedUpThisMonth =
@@ -304,12 +311,12 @@ export default function Dashboard() {
             );
           };
 
-          const yearOptions = getYearOptions(leaves);
+          const yearOptions = getYearOptions(leaves, allTakenTypes);
           const historyLeaves = leaves
             .filter(
               (l) =>
                 (historyType === "all"
-                  ? GENERAL_LEAVE_TYPES.includes(l.leaveType)
+                  ? allTakenTypes.includes(l.leaveType)
                   : l.leaveType === historyType) &&
                 l.status === "approved" &&
                 daysInYear(l, historyYear) > 0
@@ -394,7 +401,7 @@ export default function Dashboard() {
                         className="border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white"
                       >
                         <option value="all">All Leaves</option>
-                        {primaryTypes.map((type) => (
+                        {allTakenTypes.map((type) => (
                           <option key={type} value={type}>
                             {TYPE_LABELS[type] || type}
                           </option>
