@@ -10,7 +10,7 @@ import {
   getEmployeeByEmail,
   getEmployeeNamesByEmails,
   getApprovedLeavesByEmployee,
-  getLeavesAwaitingHR,
+  getLeavesVisibleToHR,
   addComment,
   getHolidays,
   getOpeningBalance,
@@ -54,7 +54,7 @@ export async function GET(req: NextRequest) {
     }
 
     if (view === "hr" && user.role === "admin") {
-      const leaves = await getLeavesAwaitingHR();
+      const leaves = await getLeavesVisibleToHR();
       return NextResponse.json(leaves);
     }
 

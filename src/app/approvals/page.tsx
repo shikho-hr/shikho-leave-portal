@@ -260,6 +260,13 @@ function ApprovalsContent() {
   const currentLeaves =
     tab === "pending" ? pendingLeaves : tab === "hr" ? hrLeaves : historyLeaves;
   const approveLabel = tab === "hr" ? "Approve (Final)" : "Approve";
+  // HR sees every open request as soon as it's submitted, but can only act
+  // once the manager has — the tab badge counts just the actionable ones so
+  // it doesn't read as "N things need your attention" when most are really
+  // just visible-for-awareness.
+  const hrActionableCount = hrLeaves.filter(
+    (l) => l.status === "manager_approved"
+  ).length;
 
   const filteredLeaves =
     tab !== "history"
@@ -314,9 +321,9 @@ function ApprovalsContent() {
               }`}
             >
               HR Approval
-              {hrLeaves.length > 0 && (
+              {hrActionableCount > 0 && (
                 <span className="ml-1.5 inline-flex items-center justify-center w-5 h-5 bg-white/20 text-xs font-bold rounded-full">
-                  {hrLeaves.length}
+                  {hrActionableCount}
                 </span>
               )}
             </button>
@@ -335,8 +342,9 @@ function ApprovalsContent() {
 
         {tab === "hr" && (
           <p className="text-sm text-gray-500 mb-4">
-            These non-tele-sales leave requests have been approved by the
-            manager and need your final approval.
+            Every leave request appears here as soon as it's submitted, so
+            you can follow along or leave an HR-only note early. You can
+            approve or reject once the manager has reviewed it.
           </p>
         )}
 
@@ -420,11 +428,16 @@ function ApprovalsContent() {
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
-                    {tab === "hr" && (
-                      <span className="text-xs text-indigo-700 bg-indigo-50 px-2 py-1 rounded-lg font-medium">
-                        Manager approved
-                      </span>
-                    )}
+                    {tab === "hr" &&
+                      (leave.status === "manager_approved" ? (
+                        <span className="text-xs text-indigo-700 bg-indigo-50 px-2 py-1 rounded-lg font-medium">
+                          Manager approved
+                        </span>
+                      ) : (
+                        <span className="text-xs text-yellow-700 bg-sunrise/10 px-2 py-1 rounded-lg font-medium">
+                          Awaiting manager
+                        </span>
+                      ))}
                     <span className="text-xs text-gray-400 bg-gray-50 px-2 py-1 rounded-lg">
                       Applied {formatDate(leave.appliedOn)}
                     </span>
@@ -507,6 +520,25 @@ function ApprovalsContent() {
                         Reviewed by {leave.reviewedByName || leave.reviewedBy}
                       </span>
                     )}
+                  </div>
+                ) : tab === "hr" && leave.status === "pending" ? (
+                  /* HR can see this request already, but can't act until
+                     the manager has reviewed it */
+                  <div className="flex items-center gap-2 mt-4 pt-3 border-t border-gray-100 text-sm text-gray-400">
+                    <svg
+                      className="w-4 h-4 shrink-0"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                      />
+                    </svg>
+                    Waiting on the manager's review before HR can act
                   </div>
                 ) : (
                   /* Action buttons */

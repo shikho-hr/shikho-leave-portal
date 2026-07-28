@@ -261,13 +261,23 @@ export async function getPendingLeavesForManager(
     );
 }
 
-// Leaves awaiting HR approval (non-tele-sales, manager already approved)
-export async function getLeavesAwaitingHR(): Promise<LeaveRequest[]> {
+// Every leave HR should be able to see, from the moment it's submitted —
+// not just once a manager has forwarded it. Includes both "pending" (still
+// awaiting the manager) and "manager_approved" (awaiting HR's own sign-off)
+// so HR can read a request and any HR-only internal note on it right away,
+// instead of only after manager action, without combing through
+// notifications for it. The route layer gates which of those two statuses
+// HR can actually act on. Sorted in memory (not .orderBy()) to avoid a new
+// composite index for "in" + orderBy on a different field.
+export async function getLeavesVisibleToHR(): Promise<LeaveRequest[]> {
   const snap = await leavesCol
-    .where("status", "==", "manager_approved")
-    .orderBy("appliedOn", "desc")
+    .where("status", "in", ["pending", "manager_approved"])
     .get();
-  return snap.docs.map((d) => d.data() as LeaveRequest);
+  return snap.docs
+    .map((d) => d.data() as LeaveRequest)
+    .sort(
+      (a, b) => new Date(b.appliedOn).getTime() - new Date(a.appliedOn).getTime()
+    );
 }
 
 export async function createLeaveRequest(
