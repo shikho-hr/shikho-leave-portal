@@ -129,7 +129,7 @@ function ApprovalsContent() {
         .getElementById(`leave-${highlight}`)
         ?.scrollIntoView({ behavior: "smooth", block: "center" });
     }, 150);
-    const clearTimer = setTimeout(() => setHighlightedId(null), 1500);
+    const clearTimer = setTimeout(() => setHighlightedId(null), 3000);
     return () => {
       clearTimeout(scrollTimer);
       clearTimeout(clearTimer);
