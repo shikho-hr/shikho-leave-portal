@@ -21,9 +21,9 @@ export default function CommentThread({
   currentUserEmail: string;
   // When true, fetches eagerly on mount (instead of on first expand) so an
   // empty thread can render nothing at all, rather than a toggle that only
-  // reveals "No comments yet" once clicked. Meant for lists scoped to a
-  // single user's own leaves (e.g. Dashboard), not for wide approval
-  // queues, since it trades the lazy-load for an upfront fetch per row.
+  // reveals "No comments yet" once clicked. Trades the lazy-load for an
+  // upfront fetch per row — used on Dashboard and Approvals, both scoped to
+  // a bounded list rather than an unbounded one.
   hideIfEmpty?: boolean;
   // Opens already expanded — used by the notification popup, where the
   // whole point of opening it was to read the comment that triggered it.

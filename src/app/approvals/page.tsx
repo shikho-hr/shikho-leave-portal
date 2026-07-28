@@ -479,6 +479,7 @@ function ApprovalsContent() {
                 <CommentThread
                   leaveId={leave.id}
                   currentUserEmail={user?.email || ""}
+                  hideIfEmpty
                 />
 
                 {/* Internal notes — manager/admin only, employee never sees this */}
