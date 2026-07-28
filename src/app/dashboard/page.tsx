@@ -278,8 +278,7 @@ export default function Dashboard() {
           const renderCard = (type: string, i: number, compact = false) => {
             const usedUpThisMonth =
               type === "ladies_wfh" && (balance.remaining[type] ?? 0) === 0;
-            const isGeneralLeave = GENERAL_LEAVE_TYPES.includes(type);
-            const showTaken = balanceView === "taken" && isGeneralLeave;
+            const showTaken = balanceView === "taken";
             return (
             <div
               key={type}
