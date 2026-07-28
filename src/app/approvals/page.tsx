@@ -257,8 +257,21 @@ function ApprovalsContent() {
     );
   }
 
+  // Actionable (manager_approved) cards float above the read-only
+  // "Awaiting manager" ones — appliedOn order still applies within each
+  // group, but HR shouldn't have to scroll past pending ones to find what
+  // they can actually act on.
+  const sortedHrLeaves = [...hrLeaves].sort((a, b) => {
+    const rank = (l: PendingLeave) => (l.status === "manager_approved" ? 0 : 1);
+    return rank(a) - rank(b);
+  });
+
   const currentLeaves =
-    tab === "pending" ? pendingLeaves : tab === "hr" ? hrLeaves : historyLeaves;
+    tab === "pending"
+      ? pendingLeaves
+      : tab === "hr"
+      ? sortedHrLeaves
+      : historyLeaves;
   const approveLabel = tab === "hr" ? "Approve (Final)" : "Approve";
   // HR sees every open request as soon as it's submitted, but can only act
   // once the manager has — the tab badge counts just the actionable ones so
