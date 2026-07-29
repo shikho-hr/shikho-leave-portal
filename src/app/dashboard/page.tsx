@@ -470,8 +470,7 @@ export default function Dashboard() {
                                   {formatDate(l.appliedOn)}
                                 </span>
                                 <span className="text-gray-500 text-right">
-                                  {daysInYear(l, historyYear)} day
-                                  {daysInYear(l, historyYear) === 1 ? "" : "s"}
+                                  {daysInYear(l, historyYear)}
                                 </span>
                               </div>
                             ))}
