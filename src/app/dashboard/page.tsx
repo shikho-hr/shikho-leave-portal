@@ -437,7 +437,7 @@ export default function Dashboard() {
                             {historyYear === "lifetime" ? "" : ` in ${historyYear}`}
                           </div>
                           <div
-                            className={`grid gap-3 px-4 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wide border-b border-gray-100 ${
+                            className={`grid gap-3 px-4 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wide border-b border-gray-100 text-center ${
                               historyType === "all"
                                 ? "grid-cols-[0.8fr_1.2fr_1fr_0.6fr]"
                                 : "grid-cols-[1.4fr_1fr_0.6fr]"
@@ -446,13 +446,13 @@ export default function Dashboard() {
                             {historyType === "all" && <span>Type</span>}
                             <span>Dates</span>
                             <span>Applied On</span>
-                            <span className="text-right">Days</span>
+                            <span>Days</span>
                           </div>
                           <div className="divide-y divide-gray-50">
                             {historyLeaves.map((l) => (
                               <div
                                 key={l.id}
-                                className={`grid gap-3 items-center px-4 py-3 text-sm ${
+                                className={`grid gap-3 items-center px-4 py-3 text-sm text-center ${
                                   historyType === "all"
                                     ? "grid-cols-[0.8fr_1.2fr_1fr_0.6fr]"
                                     : "grid-cols-[1.4fr_1fr_0.6fr]"
@@ -469,7 +469,7 @@ export default function Dashboard() {
                                 <span className="text-gray-500">
                                   {formatDate(l.appliedOn)}
                                 </span>
-                                <span className="text-gray-500 text-right">
+                                <span className="text-gray-500">
                                   {daysInYear(l, historyYear)}
                                 </span>
                               </div>
