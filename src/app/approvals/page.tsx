@@ -465,7 +465,7 @@ function ApprovalsContent() {
               d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
             />
           </svg>
-          Waiting on the manager's review before HR can act
+          Waiting for manager's review
         </div>
       ) : (
         /* Action buttons */
