@@ -73,6 +73,44 @@ const blockDatePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
   e.preventDefault();
 };
 
+// Collapsible section header for the HR tab's two status groups — e.g.
+// "Manager approved (2)".
+function GroupHeader({
+  title,
+  count,
+  open,
+  onToggle,
+}: {
+  title: string;
+  count: number;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      onClick={onToggle}
+      className="w-full flex items-center gap-2 bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-3 hover:border-gray-300 transition-colors font-semibold text-gray-900"
+    >
+      <svg
+        className={`w-4 h-4 text-gray-400 transition-transform ${
+          open ? "rotate-90" : ""
+        }`}
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M9 5l7 7-7 7"
+        />
+      </svg>
+      {title} ({count})
+    </button>
+  );
+}
+
 export default function Approvals() {
   return (
     <Suspense fallback={null}>
@@ -102,6 +140,12 @@ function ApprovalsContent() {
   const [filterStatus, setFilterStatus] = useState("all");
   const [filterDateFrom, setFilterDateFrom] = useState("");
   const [filterDateTo, setFilterDateTo] = useState("");
+  // HR tab groups: "Manager approved" (actionable) starts open since that's
+  // what needs attention; "Awaiting manager" (read-only) starts collapsed.
+  const [hrGroupOpen, setHrGroupOpen] = useState({
+    approved: true,
+    pending: false,
+  });
 
   const isAdmin = user?.role === "admin";
 
@@ -265,6 +309,13 @@ function ApprovalsContent() {
     const rank = (l: PendingLeave) => (l.status === "manager_approved" ? 0 : 1);
     return rank(a) - rank(b);
   });
+  // The HR tab renders these as two separate collapsible groups rather than
+  // one flat list — appliedOn order (newest first) is preserved within each
+  // since sortedHrLeaves is already ordered that way.
+  const hrApprovedLeaves = sortedHrLeaves.filter(
+    (l) => l.status === "manager_approved"
+  );
+  const hrPendingLeaves = sortedHrLeaves.filter((l) => l.status === "pending");
 
   const currentLeaves =
     tab === "pending"
@@ -290,6 +341,174 @@ function ApprovalsContent() {
             (filterStatus === "all" || l.status === filterStatus) &&
             (!filterDateFrom || l.endDate >= filterDateFrom) &&
             (!filterDateTo || l.startDate <= filterDateTo)
+  );
+
+  // Shared card renderer — used for the flat Manager Approval/History lists
+  // and for both grouped lists on the HR tab.
+  const renderCard = (leave: PendingLeave) => (
+    <div
+      key={leave.id}
+      id={`leave-${leave.id}`}
+      className={`bg-white rounded-2xl border p-5 shadow-sm transition-colors duration-700 ${
+        highlightedId === leave.id
+          ? "border-indigo-400 bg-indigo-50/70 ring-2 ring-indigo-300"
+          : "border-gray-100"
+      }`}
+    >
+      <div className="flex items-start justify-between mb-3">
+        <div>
+          <p className="font-semibold text-gray-900">{leave.employeeName}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {tab === "hr" &&
+            (leave.status === "manager_approved" ? (
+              <span className="text-xs text-indigo-700 bg-indigo-50 px-2 py-1 rounded-lg font-medium">
+                Manager approved
+              </span>
+            ) : (
+              <span className="text-xs text-yellow-700 bg-sunrise/10 px-2 py-1 rounded-lg font-medium">
+                Awaiting manager
+              </span>
+            ))}
+          <span className="text-xs text-gray-400 bg-gray-50 px-2 py-1 rounded-lg">
+            Applied {formatDate(leave.appliedOn)}
+          </span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-[1fr_1.4fr_0.6fr_2fr] items-center gap-x-6 gap-y-3 text-sm mb-4">
+        <div>
+          <p className="text-gray-400 text-xs uppercase tracking-wide">
+            Type
+          </p>
+          <p className="font-medium mt-0.5">
+            {TYPE_LABELS[leave.leaveType] || leave.leaveType}
+            {leave.halfDayPeriod && (
+              <span className="block text-xs font-normal text-gray-400">
+                {HALF_DAY_LABELS[leave.halfDayPeriod]}
+              </span>
+            )}
+          </p>
+        </div>
+        <div>
+          <p className="text-gray-400 text-xs uppercase tracking-wide">
+            Dates
+          </p>
+          <p className="font-medium mt-0.5">
+            {formatDateRange(leave.startDate, leave.endDate)}
+            {leave.leaveType === "compensatory" &&
+              leave.extraWorkStartDate &&
+              leave.extraWorkEndDate && (
+                <span className="block text-xs font-normal text-gray-400">
+                  Worked: {formatDate(leave.extraWorkStartDate)} –{" "}
+                  {formatDate(leave.extraWorkEndDate)}
+                </span>
+              )}
+          </p>
+        </div>
+        <div>
+          <p className="text-gray-400 text-xs uppercase tracking-wide">
+            Days
+          </p>
+          <p className="font-medium mt-0.5">{leave.days}</p>
+        </div>
+        <div>
+          <p className="text-gray-400 text-xs uppercase tracking-wide">
+            Reason
+          </p>
+          <p className="font-medium mt-0.5">{leave.reason}</p>
+        </div>
+      </div>
+
+      {/* Comment thread */}
+      <CommentThread
+        leaveId={leave.id}
+        currentUserEmail={user?.email || ""}
+        hideIfEmpty
+      />
+
+      {/* Internal notes — manager/admin only, employee never sees this */}
+      <InternalNoteThread leaveId={leave.id} currentUserEmail={user?.email || ""} />
+
+      {tab === "history" ? (
+        <div className="flex items-center justify-between mt-4 pt-3 border-t border-gray-100">
+          <span
+            className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+              STATUS_COLORS[leave.status] || ""
+            }`}
+          >
+            {STATUS_LABELS[leave.status] || leave.status}
+            {leave.status === "rejected" &&
+              leave.rejectedByRole &&
+              ` (by ${leave.rejectedByRole === "admin" ? "HR" : "Manager"})`}
+          </span>
+          {leave.reviewedBy && (
+            <span className="text-xs text-gray-400">
+              Reviewed by {leave.reviewedByName || leave.reviewedBy}
+            </span>
+          )}
+        </div>
+      ) : tab === "hr" && leave.status === "pending" ? (
+        /* HR can see this request already, but can't act until
+           the manager has reviewed it */
+        <div className="flex items-center gap-2 mt-4 pt-3 border-t border-gray-100 text-sm text-gray-400">
+          <svg
+            className="w-4 h-4 shrink-0"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+            />
+          </svg>
+          Waiting on the manager's review before HR can act
+        </div>
+      ) : (
+        /* Action buttons */
+        <div className="flex items-end gap-3 mt-4 pt-3 border-t border-gray-100">
+          <div className="flex-1">
+            <input
+              type="text"
+              placeholder="Add comment (required if rejecting)"
+              value={comments[leave.id] || ""}
+              onChange={(e) => {
+                setComments((c) => ({
+                  ...c,
+                  [leave.id]: e.target.value,
+                }));
+                setErrors((err) => {
+                  const next = { ...err };
+                  delete next[leave.id];
+                  return next;
+                });
+              }}
+              className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 bg-gray-50/50"
+            />
+            {errors[leave.id] && (
+              <p className="text-xs text-coral mt-1">{errors[leave.id]}</p>
+            )}
+          </div>
+          <button
+            onClick={() => handleAction(leave.id, "approved")}
+            disabled={actionId === leave.id}
+            className="bg-green-600 text-white text-sm font-semibold px-5 py-2 rounded-xl hover:bg-green-700 disabled:opacity-50 transition-colors"
+          >
+            {approveLabel}
+          </button>
+          <button
+            onClick={() => handleAction(leave.id, "rejected")}
+            disabled={actionId === leave.id}
+            className="bg-coral text-white text-sm font-semibold px-5 py-2 rounded-xl hover:opacity-90 disabled:opacity-50 transition-colors"
+          >
+            Reject
+          </button>
+        </div>
+      )}
+    </div>
   );
 
   return (
@@ -422,183 +641,45 @@ function ApprovalsContent() {
               ? "No requests awaiting HR approval"
               : "No leave request activity yet"}
           </div>
-        ) : (
+        ) : tab === "hr" ? (
           <div className="space-y-4">
-            {filteredLeaves.map((leave) => (
-              <div
-                key={leave.id}
-                id={`leave-${leave.id}`}
-                className={`bg-white rounded-2xl border p-5 shadow-sm transition-colors duration-700 ${
-                  highlightedId === leave.id
-                    ? "border-indigo-400 bg-indigo-50/70 ring-2 ring-indigo-300"
-                    : "border-gray-100"
-                }`}
-              >
-                <div className="flex items-start justify-between mb-3">
-                  <div>
-                    <p className="font-semibold text-gray-900">
-                      {leave.employeeName}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {tab === "hr" &&
-                      (leave.status === "manager_approved" ? (
-                        <span className="text-xs text-indigo-700 bg-indigo-50 px-2 py-1 rounded-lg font-medium">
-                          Manager approved
-                        </span>
-                      ) : (
-                        <span className="text-xs text-yellow-700 bg-sunrise/10 px-2 py-1 rounded-lg font-medium">
-                          Awaiting manager
-                        </span>
-                      ))}
-                    <span className="text-xs text-gray-400 bg-gray-50 px-2 py-1 rounded-lg">
-                      Applied {formatDate(leave.appliedOn)}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 sm:grid-cols-[1fr_1.4fr_0.6fr_2fr] items-center gap-x-6 gap-y-3 text-sm mb-4">
-                  <div>
-                    <p className="text-gray-400 text-xs uppercase tracking-wide">
-                      Type
-                    </p>
-                    <p className="font-medium mt-0.5">
-                      {TYPE_LABELS[leave.leaveType] || leave.leaveType}
-                      {leave.halfDayPeriod && (
-                        <span className="block text-xs font-normal text-gray-400">
-                          {HALF_DAY_LABELS[leave.halfDayPeriod]}
-                        </span>
-                      )}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-gray-400 text-xs uppercase tracking-wide">
-                      Dates
-                    </p>
-                    <p className="font-medium mt-0.5">
-                      {formatDateRange(leave.startDate, leave.endDate)}
-                      {leave.leaveType === "compensatory" &&
-                        leave.extraWorkStartDate &&
-                        leave.extraWorkEndDate && (
-                          <span className="block text-xs font-normal text-gray-400">
-                            Worked: {formatDate(leave.extraWorkStartDate)} –{" "}
-                            {formatDate(leave.extraWorkEndDate)}
-                          </span>
-                        )}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-gray-400 text-xs uppercase tracking-wide">
-                      Days
-                    </p>
-                    <p className="font-medium mt-0.5">{leave.days}</p>
-                  </div>
-                  <div>
-                    <p className="text-gray-400 text-xs uppercase tracking-wide">
-                      Reason
-                    </p>
-                    <p className="font-medium mt-0.5">{leave.reason}</p>
-                  </div>
-                </div>
-
-                {/* Comment thread */}
-                <CommentThread
-                  leaveId={leave.id}
-                  currentUserEmail={user?.email || ""}
-                  hideIfEmpty
+            {hrApprovedLeaves.length > 0 && (
+              <div>
+                <GroupHeader
+                  title="Manager approved"
+                  count={hrApprovedLeaves.length}
+                  open={hrGroupOpen.approved}
+                  onToggle={() =>
+                    setHrGroupOpen((s) => ({ ...s, approved: !s.approved }))
+                  }
                 />
-
-                {/* Internal notes — manager/admin only, employee never sees this */}
-                <InternalNoteThread
-                  leaveId={leave.id}
-                  currentUserEmail={user?.email || ""}
-                />
-
-                {tab === "history" ? (
-                  <div className="flex items-center justify-between mt-4 pt-3 border-t border-gray-100">
-                    <span
-                      className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold ${
-                        STATUS_COLORS[leave.status] || ""
-                      }`}
-                    >
-                      {STATUS_LABELS[leave.status] || leave.status}
-                      {leave.status === "rejected" &&
-                        leave.rejectedByRole &&
-                        ` (by ${
-                          leave.rejectedByRole === "admin" ? "HR" : "Manager"
-                        })`}
-                    </span>
-                    {leave.reviewedBy && (
-                      <span className="text-xs text-gray-400">
-                        Reviewed by {leave.reviewedByName || leave.reviewedBy}
-                      </span>
-                    )}
-                  </div>
-                ) : tab === "hr" && leave.status === "pending" ? (
-                  /* HR can see this request already, but can't act until
-                     the manager has reviewed it */
-                  <div className="flex items-center gap-2 mt-4 pt-3 border-t border-gray-100 text-sm text-gray-400">
-                    <svg
-                      className="w-4 h-4 shrink-0"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-                      />
-                    </svg>
-                    Waiting on the manager's review before HR can act
-                  </div>
-                ) : (
-                  /* Action buttons */
-                  <div className="flex items-end gap-3 mt-4 pt-3 border-t border-gray-100">
-                    <div className="flex-1">
-                      <input
-                        type="text"
-                        placeholder="Add comment (required if rejecting)"
-                        value={comments[leave.id] || ""}
-                        onChange={(e) => {
-                          setComments((c) => ({
-                            ...c,
-                            [leave.id]: e.target.value,
-                          }));
-                          setErrors((err) => {
-                            const next = { ...err };
-                            delete next[leave.id];
-                            return next;
-                          });
-                        }}
-                        className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 bg-gray-50/50"
-                      />
-                      {errors[leave.id] && (
-                        <p className="text-xs text-coral mt-1">
-                          {errors[leave.id]}
-                        </p>
-                      )}
-                    </div>
-                    <button
-                      onClick={() => handleAction(leave.id, "approved")}
-                      disabled={actionId === leave.id}
-                      className="bg-green-600 text-white text-sm font-semibold px-5 py-2 rounded-xl hover:bg-green-700 disabled:opacity-50 transition-colors"
-                    >
-                      {approveLabel}
-                    </button>
-                    <button
-                      onClick={() => handleAction(leave.id, "rejected")}
-                      disabled={actionId === leave.id}
-                      className="bg-coral text-white text-sm font-semibold px-5 py-2 rounded-xl hover:opacity-90 disabled:opacity-50 transition-colors"
-                    >
-                      Reject
-                    </button>
+                {hrGroupOpen.approved && (
+                  <div className="space-y-4 mt-4">
+                    {hrApprovedLeaves.map(renderCard)}
                   </div>
                 )}
               </div>
-            ))}
+            )}
+            {hrPendingLeaves.length > 0 && (
+              <div>
+                <GroupHeader
+                  title="Awaiting manager"
+                  count={hrPendingLeaves.length}
+                  open={hrGroupOpen.pending}
+                  onToggle={() =>
+                    setHrGroupOpen((s) => ({ ...s, pending: !s.pending }))
+                  }
+                />
+                {hrGroupOpen.pending && (
+                  <div className="space-y-4 mt-4">
+                    {hrPendingLeaves.map(renderCard)}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
+        ) : (
+          <div className="space-y-4">{filteredLeaves.map(renderCard)}</div>
         )}
       </main>
     </div>
