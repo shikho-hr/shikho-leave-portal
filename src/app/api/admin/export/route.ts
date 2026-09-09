@@ -3,22 +3,7 @@ import * as XLSX from "xlsx";
 import { getCurrentUser } from "@/lib/auth";
 import { getLeaveRequests } from "@/lib/db";
 import { LeaveRequest } from "@/lib/types";
-
-const COLUMNS: { header: string; get: (l: LeaveRequest) => string | number }[] = [
-  { header: "Employee Name", get: (l) => l.employeeName },
-  { header: "Employee Email", get: (l) => l.employeeEmail },
-  { header: "Leave Type", get: (l) => l.leaveType },
-  { header: "Half Day", get: (l) => l.halfDayPeriod || "" },
-  { header: "Start Date", get: (l) => l.startDate },
-  { header: "End Date", get: (l) => l.endDate },
-  { header: "Days", get: (l) => l.days },
-  { header: "Reason", get: (l) => l.reason },
-  { header: "Status", get: (l) => l.status },
-  { header: "Applied On", get: (l) => l.appliedOn },
-  { header: "Reviewed By", get: (l) => l.reviewedBy },
-  { header: "Reviewed On", get: (l) => l.reviewedOn },
-  { header: "Reviewer Comments", get: (l) => l.reviewerComments },
-];
+import { COLUMNS } from "@/lib/leave-export-columns";
 
 function toCsv(leaves: LeaveRequest[]): string {
   const escape = (val: string | number) => {

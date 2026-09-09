@@ -46,6 +46,8 @@ const TYPE_LABELS: Record<string, string> = {
   compensatory: "Compensatory Off",
   wfh: "Work from Home",
   unpaid: "Unpaid Leave",
+  offsite_attendance: "Off-site Attendance",
+  wfh_deployment: "WFH - Deployment",
 };
 
 const LEAVE_TYPE_OPTIONS = Object.keys(TYPE_LABELS);
@@ -98,6 +100,11 @@ export default function AdminDashboard() {
   const [filterEmpStatus, setFilterEmpStatus] = useState("all");
   const [syncing, setSyncing] = useState(false);
   const [showSyncErrors, setShowSyncErrors] = useState(false);
+  const [backingUp, setBackingUp] = useState(false);
+  const [backupResult, setBackupResult] = useState<{
+    rowsWritten?: number;
+    error?: string;
+  } | null>(null);
   const [syncResult, setSyncResult] = useState<{
     employeesSynced: number;
     holidaysSynced: number;
@@ -191,6 +198,24 @@ export default function AdminDashboard() {
     }
   };
 
+  const handleBackup = async () => {
+    setBackingUp(true);
+    setBackupResult(null);
+    try {
+      const res = await fetch("/api/admin/backup-leaves", { method: "POST" });
+      const data = await res.json();
+      setBackupResult(
+        res.ok
+          ? { rowsWritten: data.rowsWritten }
+          : { error: data.error || "Backup failed" }
+      );
+    } catch {
+      setBackupResult({ error: "Network error during backup" });
+    } finally {
+      setBackingUp(false);
+    }
+  };
+
   if (status === "loading" || loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -257,9 +282,30 @@ export default function AdminDashboard() {
               >
                 {syncing ? "Syncing..." : "Sync from Sheet"}
               </button>
+              <button
+                onClick={handleBackup}
+                disabled={backingUp}
+                className="bg-white border border-gray-200 text-gray-700 text-sm font-semibold px-4 py-2 rounded-xl hover:border-indigo-300 disabled:opacity-50 transition-colors shadow-sm"
+              >
+                {backingUp ? "Backing up..." : "Backup to Sheet"}
+              </button>
             </div>
           )}
         </div>
+
+        {backupResult && (
+          <div
+            className={`mb-6 p-3 rounded-xl text-sm font-medium ${
+              backupResult.error
+                ? "bg-coral/10 text-coral"
+                : "bg-green-50 text-green-700"
+            }`}
+          >
+            {backupResult.error
+              ? backupResult.error
+              : `Backed up ${backupResult.rowsWritten} leave record(s) to the Google Sheet.`}
+          </div>
+        )}
 
         {syncResult && (
           <div

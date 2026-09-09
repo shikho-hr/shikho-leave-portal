@@ -3,6 +3,10 @@
     {
       "path": "/api/admin/sync-roster",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/admin/backup-leaves",
+      "schedule": "15 3 * * *"
     }
   ]
 }
