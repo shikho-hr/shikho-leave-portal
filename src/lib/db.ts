@@ -9,6 +9,8 @@ import {
   BalanceSnapshot,
   Notification,
 } from "./types";
+import { LEAVE_TYPE_LABELS, formatDateRange } from "./leave-calculator";
+import { sendMail } from "./mailer";
 
 const employeesCol = adminDb.collection("employees");
 const leavesCol = adminDb.collection("leaves");
@@ -262,12 +264,11 @@ export async function getPendingLeavesForManager(
 }
 
 // Every leave HR should be able to see, from the moment it's submitted —
-// not just once a manager has forwarded it. Includes both "pending" (still
-// awaiting the manager) and "manager_approved" (awaiting HR's own sign-off)
-// so HR can read a request and any HR-only internal note on it right away,
-// instead of only after manager action, without combing through
-// notifications for it. The route layer gates which of those two statuses
-// HR can actually act on. Sorted in memory (not .orderBy()) to avoid a new
+// not just once a manager has forwarded it. Includes both "pending" (not
+// yet reviewed by the manager) and "manager_approved" (awaiting HR's own
+// sign-off) — HR can act on either directly (full override authority over
+// the approval workflow, including bypassing the manager stage entirely),
+// not just read them. Sorted in memory (not .orderBy()) to avoid a new
 // composite index for "in" + orderBy on a different field.
 export async function getLeavesVisibleToHR(): Promise<LeaveRequest[]> {
   const snap = await leavesCol
@@ -452,7 +453,8 @@ export async function addComment(
   authorEmail: string,
   authorName: string,
   comment: string,
-  isSubmission = false
+  isSubmission = false,
+  suppressEmail = false
 ): Promise<LeaveComment> {
   const id = `CMT-${Date.now()}`;
   const data: LeaveComment = {
@@ -464,7 +466,15 @@ export async function addComment(
     createdAt: new Date().toISOString(),
   };
   await commentsCol.doc(id).set(data);
-  await notifyRecipients(leaveId, authorEmail, authorName, comment, false, isSubmission);
+  await notifyRecipients(
+    leaveId,
+    authorEmail,
+    authorName,
+    comment,
+    false,
+    isSubmission,
+    suppressEmail
+  );
   return data;
 }
 
@@ -479,14 +489,19 @@ export async function addComment(
 // "X commented" — same recipients/mechanics as a regular comment, just a
 // different notification framing. Best-effort: a missing leave/employee
 // record just means fewer recipients, never a thrown error, since a
-// notification failing to send shouldn't block the comment itself.
+// notification failing to send shouldn't block the comment itself. Also
+// emails the same recipients (see sendMail() in mailer.ts — itself
+// best-effort and gated behind LEAVE_EMAILS_ENABLED), unless suppressEmail
+// is set — used for approval/forward auto-comments, which must never email
+// per the "never on approval" rule.
 async function notifyRecipients(
   leaveId: string,
   authorEmail: string,
   authorName: string,
   commentText: string,
   isInternalNote: boolean,
-  isSubmission = false
+  isSubmission = false,
+  suppressEmail = false
 ): Promise<void> {
   const leave = await getLeaveById(leaveId);
   if (!leave) return;
@@ -529,6 +544,40 @@ async function notifyRecipients(
     batch.set(notificationsCol.doc(notifId), notification);
   });
   await batch.commit();
+
+  if (suppressEmail) return;
+
+  const typeLabel = LEAVE_TYPE_LABELS[leave.leaveType] || leave.leaveType;
+  const subjectPrefix = isSubmission
+    ? "New leave request"
+    : isInternalNote
+    ? "Internal note"
+    : "New comment";
+  const verbPhrase = isSubmission
+    ? "submitted a new request for"
+    : isInternalNote
+    ? "added an internal note on"
+    : "commented on";
+  const dateRange = formatDateRange(leave.startDate, leave.endDate);
+  const link = `${process.env.APP_BASE_URL || ""}/dashboard`;
+
+  const text = `${authorName} ${verbPhrase} ${leave.employeeName}'s ${typeLabel} request (${dateRange}, ${leave.days} day(s)).\n\n"${commentText}"\n\nView in the Leave Portal: ${link}`;
+  const html = `<p><strong>${authorName}</strong> ${verbPhrase} <strong>${leave.employeeName}'s ${typeLabel}</strong> request (${dateRange}, ${leave.days} day(s)).</p><p>${commentText}</p><p><a href="${link}">View in the Leave Portal</a></p>`;
+
+  // Every email about this leave shares one root Message-ID so mail clients
+  // thread them into a single conversation. The submission email originates
+  // the thread; everything after it replies into that root.
+  const rootMessageId = `<leave-${leaveId}@shikho.com>`;
+
+  await sendMail({
+    to: Array.from(recipients),
+    subject: `${subjectPrefix} — ${leave.employeeName}'s ${typeLabel}`,
+    text,
+    html,
+    ...(isSubmission
+      ? { messageId: rootMessageId }
+      : { inReplyTo: rootMessageId, references: rootMessageId }),
+  });
 }
 
 // ── Notifications ───────────────────────────────────────────────
@@ -579,7 +628,8 @@ export async function addInternalNote(
   leaveId: string,
   authorEmail: string,
   authorName: string,
-  comment: string
+  comment: string,
+  suppressEmail = false
 ): Promise<LeaveComment> {
   const id = `NOTE-${Date.now()}`;
   const data: LeaveComment = {
@@ -591,6 +641,14 @@ export async function addInternalNote(
     createdAt: new Date().toISOString(),
   };
   await internalNotesCol.doc(id).set(data);
-  await notifyRecipients(leaveId, authorEmail, authorName, comment, true);
+  await notifyRecipients(
+    leaveId,
+    authorEmail,
+    authorName,
+    comment,
+    true,
+    false,
+    suppressEmail
+  );
   return data;
 }
