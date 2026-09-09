@@ -54,6 +54,8 @@ const TYPE_LABELS: Record<string, string> = {
   compensatory: "Compensatory",
   wfh: "Work from Home",
   unpaid: "Unpaid Leave",
+  offsite_attendance: "Off-site Attendance",
+  wfh_deployment: "WFH - Deployment",
 };
 
 const HALF_DAY_LABELS: Record<string, string> = {
@@ -140,8 +142,10 @@ function ApprovalsContent() {
   const [filterStatus, setFilterStatus] = useState("all");
   const [filterDateFrom, setFilterDateFrom] = useState("");
   const [filterDateTo, setFilterDateTo] = useState("");
-  // HR tab groups: "Manager approved" (actionable) starts open since that's
-  // what needs attention; "Awaiting manager" (read-only) starts collapsed.
+  // HR tab groups: both are actionable (HR can approve/reject at either
+  // stage) — "Manager approved" starts open since it's usually more urgent;
+  // "Awaiting manager" starts collapsed as a soft nudge to let the manager
+  // see it first, without blocking HR from acting on it directly.
   const [hrGroupOpen, setHrGroupOpen] = useState({
     approved: true,
     pending: false,
@@ -324,13 +328,10 @@ function ApprovalsContent() {
       ? sortedHrLeaves
       : historyLeaves;
   const approveLabel = tab === "hr" ? "Approve (Final)" : "Approve";
-  // HR sees every open request as soon as it's submitted, but can only act
-  // once the manager has — the tab badge counts just the actionable ones so
-  // it doesn't read as "N things need your attention" when most are really
-  // just visible-for-awareness.
-  const hrActionableCount = hrLeaves.filter(
-    (l) => l.status === "manager_approved"
-  ).length;
+  // HR can act on any request as soon as it's submitted — no longer gated
+  // on the manager stage — so every request in the HR-visible list counts
+  // toward the tab badge.
+  const hrActionableCount = hrLeaves.length;
 
   const filteredLeaves =
     tab !== "history"
@@ -447,25 +448,6 @@ function ApprovalsContent() {
               Reviewed by {leave.reviewedByName || leave.reviewedBy}
             </span>
           )}
-        </div>
-      ) : tab === "hr" && leave.status === "pending" ? (
-        /* HR can see this request already, but can't act until
-           the manager has reviewed it */
-        <div className="flex items-center gap-2 mt-4 pt-3 border-t border-gray-100 text-sm text-gray-400">
-          <svg
-            className="w-4 h-4 shrink-0"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-            />
-          </svg>
-          Waiting for manager's review
         </div>
       ) : (
         /* Action buttons */

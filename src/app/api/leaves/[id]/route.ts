@@ -112,12 +112,10 @@ export async function PATCH(
           // Manager approves → goes to HR
           newStatus = "manager_approved";
         } else if (leave.status === "pending" && role === "admin") {
-          // HR can see this request already (it's in their queue as soon as
-          // it's submitted) but can't act on it until the manager has.
-          return NextResponse.json(
-            { error: "This leave needs manager approval before HR can act" },
-            { status: 400 }
-          );
+          // HR can finalize a still-pending request directly, fully
+          // bypassing the manager stage — HR has full override authority
+          // over the approval workflow at any point.
+          newStatus = "approved";
         } else if (leave.status === "manager_approved" && role === "admin") {
           // HR/Admin gives final approval
           newStatus = "approved";
@@ -147,19 +145,13 @@ export async function PATCH(
       }
     }
 
-    // Rejection can happen at any pending/manager_approved stage — except
-    // HR rejecting a two-stage leave still sitting at "pending", same rule
-    // as approval: HR waits for the manager's review first.
+    // Rejection can happen at any pending/manager_approved stage — HR can
+    // reject a still-pending two-stage leave directly, same override
+    // authority as approval above.
     if (status === "rejected") {
       if (leave.status !== "pending" && leave.status !== "manager_approved") {
         return NextResponse.json(
           { error: "This leave has already been processed" },
-          { status: 400 }
-        );
-      }
-      if (!isSingleStage && leave.status === "pending" && role === "admin") {
-        return NextResponse.json(
-          { error: "This leave needs manager approval before HR can act" },
           { status: 400 }
         );
       }
@@ -188,7 +180,9 @@ export async function PATCH(
       params.id,
       user.email,
       user.name || user.email,
-      autoComment
+      autoComment,
+      false,
+      newStatus === "manager_approved" || newStatus === "approved"
     );
 
     return NextResponse.json({
