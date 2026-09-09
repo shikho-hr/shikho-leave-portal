@@ -17,6 +17,8 @@ const ALL_LEAVE_TYPES: LeaveType[] = [
   "compensatory",
   "wfh",
   "unpaid",
+  "offsite_attendance",
+  "wfh_deployment",
 ];
 
 // Admin-only correction of a request's leave type. Deliberately separate

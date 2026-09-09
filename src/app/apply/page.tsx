@@ -24,6 +24,8 @@ const TYPE_LABELS: Record<string, string> = {
   compensatory: "Compensatory Off",
   wfh: "Work from Home",
   unpaid: "Unpaid Leave",
+  offsite_attendance: "Off-site Attendance",
+  wfh_deployment: "WFH - Deployment",
 };
 
 type HalfDayChoice = "" | "first_half" | "second_half";

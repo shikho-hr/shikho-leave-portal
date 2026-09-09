@@ -57,6 +57,8 @@ const TYPE_LABELS: Record<string, string> = {
   compensatory: "Compensatory",
   wfh: "Work from Home",
   unpaid: "Unpaid Leave",
+  offsite_attendance: "Off-site Attendance",
+  wfh_deployment: "WFH - Deployment",
 };
 
 // Dates must be picked via the calendar UI, not typed — avoids mm/dd vs
@@ -262,7 +264,13 @@ export default function Dashboard() {
           Leave Balance ({new Date().getFullYear()})
         </h2>
         {(() => {
-          const excluded = ["wfh", "unpaid", "compensatory"];
+          const excluded = [
+            "wfh",
+            "unpaid",
+            "compensatory",
+            "offsite_attendance",
+            "wfh_deployment",
+          ];
           const primaryTypes = GENERAL_LEAVE_TYPES.filter((t) =>
             availableTypes.includes(t)
           );

@@ -7,7 +7,7 @@ import {
   ContractType,
   Holiday,
   OpeningBalance,
-  LeaveType,
+  LeaveBalance,
 } from "./types";
 
 const EMPLOYEES_RANGE = "Employees!A:N";
@@ -72,7 +72,7 @@ function normalizeDate(raw: string): string | null {
       : yearRaw;
   return `${year}-${month}-${day.padStart(2, "0")}`;
 }
-const LEAVE_TYPES: LeaveType[] = [
+const LEAVE_TYPES: (keyof LeaveBalance)[] = [
   "sick",
   "casual",
   "annual",

@@ -39,7 +39,9 @@ export type LeaveType =
   | "compassionate"
   | "compensatory"
   | "wfh"
-  | "unpaid";
+  | "unpaid"
+  | "offsite_attendance"
+  | "wfh_deployment";
 
 export type LeaveStatus = "pending" | "manager_approved" | "approved" | "rejected";
 export type HalfDayPeriod = "first_half" | "second_half";
@@ -67,6 +69,10 @@ export interface LeaveRequest {
 
 // ── Leave balance ───────────────────────────────────────────────
 
+// Note: "offsite_attendance" and "wfh_deployment" are deliberately absent
+// from this interface — they're unlimited/untracked leave types with no
+// entitlement or balance concept (see leave-calculator.ts's
+// UNLIMITED_LEAVE_TYPES), so they're never keys here.
 export interface LeaveBalance {
   sick: number;
   casual: number;

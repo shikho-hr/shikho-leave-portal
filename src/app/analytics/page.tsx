@@ -46,6 +46,8 @@ const TYPE_LABELS: Record<string, string> = {
   compensatory: "Compensatory Off",
   wfh: "Work from Home",
   unpaid: "Unpaid Leave",
+  offsite_attendance: "Off-site Attendance",
+  wfh_deployment: "WFH - Deployment",
 };
 
 // Unpaid leave is deliberately not offered as a filter option; unpaid

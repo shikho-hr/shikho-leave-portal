@@ -30,6 +30,8 @@ const TYPE_LABELS: Record<string, string> = {
   compensatory: "Compensatory",
   wfh: "Work from Home",
   unpaid: "Unpaid Leave",
+  offsite_attendance: "Off-site Attendance",
+  wfh_deployment: "WFH - Deployment",
 };
 
 const STATUS_LABELS: Record<string, string> = {

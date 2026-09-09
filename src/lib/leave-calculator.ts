@@ -19,11 +19,49 @@ import {
 
 // ── Helpers ─────────────────────────────────────────────────────
 
+// Server-side label source (e.g. for email content built in db.ts) — the
+// client pages each keep their own identical TYPE_LABELS copy for display.
+export const LEAVE_TYPE_LABELS: Record<LeaveType, string> = {
+  sick: "Sick Leave",
+  casual: "Casual Leave",
+  annual: "Annual Leave",
+  marriage: "Marriage Leave",
+  maternity: "Maternity Leave",
+  paternity: "Paternity Leave",
+  ladies_wfh: "Monthly WFH (Ladies)",
+  compassionate: "Compassionate Leave",
+  compensatory: "Compensatory Off",
+  wfh: "Work from Home",
+  unpaid: "Unpaid Leave",
+  offsite_attendance: "Off-site Attendance",
+  wfh_deployment: "WFH - Deployment",
+};
+
 export const HALF_DAY_ELIGIBLE_TYPES: LeaveType[] = [
   "sick",
   "casual",
   "annual",
   "wfh",
+  "offsite_attendance",
+  "wfh_deployment",
+];
+
+// Off-site Attendance / WFH - Deployment are unlimited — tracked and
+// approved like any other request, but never counted against a leave
+// balance (see the LeaveBalance comment in types.ts), so they're skipped
+// entirely by the balance check in validateLeaveRequest().
+export const UNLIMITED_LEAVE_TYPES: LeaveType[] = [
+  "offsite_attendance",
+  "wfh_deployment",
+];
+
+// Manager-only leave types, regardless of employeeType — Monthly WFH for
+// Ladies, plus Off-site Attendance / WFH - Deployment. Combined with the
+// tele-sales shortcut inside isSingleStageApproval() below.
+export const SINGLE_STAGE_LEAVE_TYPES: LeaveType[] = [
+  "ladies_wfh",
+  "offsite_attendance",
+  "wfh_deployment",
 ];
 
 // Reason is optional (but the field stays visible) for these types.
@@ -42,14 +80,19 @@ export const PATERNITY_MAX_DAYS = 14;
 export const MATERNITY_MAX_DAYS = 180;
 
 // Whether a leave only needs Manager approval, skipping HR entirely — true
-// for tele-sales employees (any leave type), or Monthly WFH for Ladies
-// (any employee type). Shared between the approval-workflow route and the
-// Dashboard's status display so both agree on the same rule.
+// for tele-sales employees (any leave type), or for any of
+// SINGLE_STAGE_LEAVE_TYPES regardless of employee type (Monthly WFH for
+// Ladies, Off-site Attendance, WFH - Deployment). Shared between the
+// approval-workflow route and the Dashboard's status display so both agree
+// on the same rule.
 export function isSingleStageApproval(
   employeeType: EmployeeType,
   leaveType: LeaveType
 ): boolean {
-  return employeeType !== "non-tele-sales" || leaveType === "ladies_wfh";
+  return (
+    employeeType !== "non-tele-sales" ||
+    SINGLE_STAGE_LEAVE_TYPES.includes(leaveType)
+  );
 }
 
 // Display format for dates shown anywhere in the portal, e.g. "15 Jul, 2026".
@@ -295,12 +338,13 @@ function calculateUsed(
   for (const leave of approvedLeaves) {
     const type = leave.leaveType as LeaveType;
     if (!(type in used)) continue;
+    const balanceKey = type as keyof LeaveBalance;
     const yearDays =
       leave.daysByYear?.[String(targetYear)] ??
       (new Date(leave.startDate).getFullYear() === targetYear
         ? leave.days
         : 0);
-    used[type] += yearDays;
+    used[balanceKey] += yearDays;
   }
 
   return used;
@@ -358,7 +402,7 @@ export function calculateBalance(
   }
 
   if (openingBalance) {
-    for (const type of Object.keys(entitled) as LeaveType[]) {
+    for (const type of Object.keys(entitled) as (keyof LeaveBalance)[]) {
       entitled[type] += openingBalance[type] ?? 0;
     }
   }
@@ -456,11 +500,37 @@ export function validateLeaveRequest(
     };
   }
 
-  // Half-day is only meaningful for sick/casual/annual
+  // The same extra-work day(s) can't be claimed as compensatory off twice —
+  // check for date-range overlap against this employee's own non-rejected
+  // compensatory-off requests (a rejected one frees the date back up, same
+  // convention as countNonRejectedLifetime below).
+  if (
+    leaveType === "compensatory" &&
+    extraWorkDates?.startDate &&
+    extraWorkDates?.endDate
+  ) {
+    const alreadyUsed = existingLeaves.some((l) => {
+      if (l.leaveType !== "compensatory" || l.status === "rejected")
+        return false;
+      if (!l.extraWorkStartDate || !l.extraWorkEndDate) return false;
+      return (
+        extraWorkDates.startDate! <= l.extraWorkEndDate &&
+        l.extraWorkStartDate <= extraWorkDates.endDate!
+      );
+    });
+    if (alreadyUsed) {
+      return {
+        valid: false,
+        error: "This Additional Work Date has already been used",
+      };
+    }
+  }
+
+  // Half-day is only available for specific leave types
   if (halfDayPeriod && !HALF_DAY_ELIGIBLE_TYPES.includes(leaveType)) {
     return {
       valid: false,
-      error: "Half-day is only available for sick, casual, and annual leave.",
+      error: "Half-day is not available for this leave type.",
     };
   }
 
@@ -589,16 +659,20 @@ export function validateLeaveRequest(
   // We allow submission but the UI can show a notice
 
   // Check remaining balance — per year, since a request spanning New Year's
-  // draws from two separate years' balances (see daysByYear).
-  for (const [yearStr, yearDays] of Object.entries(daysByYear)) {
-    const yearBalance = balancesByYear[yearStr];
-    if (!yearBalance || yearBalance.remaining[leaveType] < yearDays) {
-      return {
-        valid: false,
-        error: `Insufficient ${leaveType} leave balance for ${yearStr}. Available: ${
-          yearBalance?.remaining[leaveType] ?? 0
-        }, Requested: ${yearDays}`,
-      };
+  // draws from two separate years' balances (see daysByYear). Skipped
+  // entirely for unlimited types, which have no LeaveBalance entry to check.
+  if (!UNLIMITED_LEAVE_TYPES.includes(leaveType)) {
+    const balanceKey = leaveType as keyof LeaveBalance;
+    for (const [yearStr, yearDays] of Object.entries(daysByYear)) {
+      const yearBalance = balancesByYear[yearStr];
+      if (!yearBalance || yearBalance.remaining[balanceKey] < yearDays) {
+        return {
+          valid: false,
+          error: `Insufficient ${leaveType} leave balance for ${yearStr}. Available: ${
+            yearBalance?.remaining[balanceKey] ?? 0
+          }, Requested: ${yearDays}`,
+        };
+      }
     }
   }
 
@@ -629,6 +703,8 @@ export function getAvailableLeaveTypes(
     "compassionate",
     "compensatory",
     "wfh",
+    "offsite_attendance",
+    "wfh_deployment",
   ].filter((type) => {
     if (type === "maternity") {
       return (
