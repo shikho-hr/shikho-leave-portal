@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "migrate:firestore": "tsx --env-file=.env.local scripts/migrate-firestore-to-postgres.ts"
+    "migrate:firestore": "tsx --env-file=.env.local scripts/migrate-firestore-to-postgres.ts",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
