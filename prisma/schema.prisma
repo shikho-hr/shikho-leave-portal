@@ -1,0 +1,153 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Employee {
+  email                 String    @id
+  id                    String    @unique
+  name                  String
+  joiningDate           DateTime  @db.Date
+  designation           String
+  department             String
+  employeeType          String
+  managerEmail          String?
+  probationEndDate      DateTime? @db.Date
+  role                  String
+  status                String
+  fullTimeEffectiveDate DateTime? @db.Date
+  gender                String?
+  contractType          String
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  manager         Employee?        @relation("ManagerReportees", fields: [managerEmail], references: [email])
+  reportees       Employee[]       @relation("ManagerReportees")
+  leaves          Leave[]
+  openingBalance  OpeningBalance?
+  balanceSnapshot BalanceSnapshot?
+  notifications   Notification[]
+
+  @@index([managerEmail])
+  @@index([status])
+  @@index([role])
+}
+
+model Leave {
+  id                 String    @id
+  employeeEmail      String
+  employeeName       String
+  leaveType          String
+  startDate          DateTime  @db.Date
+  endDate            DateTime  @db.Date
+  days               Decimal   @db.Decimal(5, 1)
+  daysByYear         Json      @default("{}")
+  halfDayPeriod      String?
+  extraWorkStartDate DateTime? @db.Date
+  extraWorkEndDate   DateTime? @db.Date
+  reason             String
+  status             String    @default("pending")
+  appliedOn          DateTime  @default(now())
+  reviewedBy         String    @default("")
+  reviewedOn         String    @default("")
+  reviewerComments   String    @default("")
+  rejectedByRole     String?
+  createdAt          DateTime  @default(now())
+
+  employee      Employee       @relation(fields: [employeeEmail], references: [email])
+  comments      LeaveComment[]
+  internalNotes InternalNote[]
+  notifications Notification[]
+
+  @@index([employeeEmail, appliedOn(sort: Desc)])
+  @@index([status, appliedOn(sort: Desc)])
+  @@index([status, endDate, startDate])
+  @@index([employeeEmail, status])
+}
+
+model LeaveComment {
+  id          String   @id
+  leaveId     String
+  authorEmail String
+  authorName  String
+  comment     String
+  createdAt   DateTime @default(now())
+
+  leave Leave @relation(fields: [leaveId], references: [id], onDelete: Cascade)
+
+  @@index([leaveId, createdAt(sort: Asc)])
+}
+
+model InternalNote {
+  id          String   @id
+  leaveId     String
+  authorEmail String
+  authorName  String
+  comment     String
+  createdAt   DateTime @default(now())
+
+  leave Leave @relation(fields: [leaveId], references: [id], onDelete: Cascade)
+
+  @@index([leaveId, createdAt(sort: Asc)])
+}
+
+model Holiday {
+  date DateTime @id @db.Date
+  name String
+}
+
+model OpeningBalance {
+  email         String   @id
+  sick          Decimal? @db.Decimal(5, 1)
+  casual        Decimal? @db.Decimal(5, 1)
+  annual        Decimal? @db.Decimal(5, 1)
+  marriage      Decimal? @db.Decimal(5, 1)
+  maternity     Decimal? @db.Decimal(5, 1)
+  paternity     Decimal? @db.Decimal(5, 1)
+  ladiesWfh     Decimal? @db.Decimal(5, 1)
+  compassionate Decimal? @db.Decimal(5, 1)
+  compensatory  Decimal? @db.Decimal(5, 1)
+  wfh           Decimal? @db.Decimal(5, 1)
+  unpaid        Decimal? @db.Decimal(5, 1)
+  updatedAt     DateTime @default(now())
+
+  employee Employee @relation(fields: [email], references: [email])
+}
+
+model BalanceSnapshot {
+  email          String   @id
+  casualEntitled Decimal? @db.Decimal(5, 1)
+  casualTaken    Decimal? @db.Decimal(5, 1)
+  casualBalance  Decimal? @db.Decimal(5, 1)
+  sickEntitled   Decimal? @db.Decimal(5, 1)
+  sickTaken      Decimal? @db.Decimal(5, 1)
+  sickBalance    Decimal? @db.Decimal(5, 1)
+  annualEntitled Decimal? @db.Decimal(5, 1)
+  annualTaken    Decimal? @db.Decimal(5, 1)
+  annualBalance  Decimal? @db.Decimal(5, 1)
+  importedAt     DateTime @default(now())
+
+  employee Employee @relation(fields: [email], references: [email])
+}
+
+model Notification {
+  id                String   @id
+  recipientEmail    String
+  leaveId           String
+  leaveType         String
+  employeeName      String
+  commentAuthorName String
+  commentPreview    String
+  isInternalNote    Boolean  @default(false)
+  isSubmission      Boolean  @default(false)
+  read              Boolean  @default(false)
+  createdAt         DateTime @default(now())
+
+  recipient Employee @relation(fields: [recipientEmail], references: [email])
+  leave     Leave    @relation(fields: [leaveId], references: [id], onDelete: Cascade)
+
+  @@index([recipientEmail, createdAt(sort: Desc)])
+}
