@@ -18,8 +18,11 @@ async function runSync() {
     fetchOpeningBalancesFromSheet(),
   ]);
 
+  // Opening balances reference employees by email (foreign key in
+  // Postgres, unlike Firestore) — employees must be written first, so this
+  // can no longer run as a single Promise.all like the other two.
+  await upsertEmployeesFromSheet(employeeResult.employees);
   await Promise.all([
-    upsertEmployeesFromSheet(employeeResult.employees),
     upsertHolidaysFromSheet(holidayResult.holidays),
     upsertOpeningBalancesFromSheet(balanceResult.balances),
   ]);

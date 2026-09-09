@@ -1,25 +1,258 @@
-import { adminDb } from "./firebase-admin";
+import { prisma } from "./prisma";
 import {
   Employee,
+  EmployeeType,
+  Role,
+  Gender,
+  ContractType,
   LeaveRequest,
   LeaveComment,
   LeaveType,
+  LeaveStatus,
   Holiday,
   OpeningBalance,
   BalanceSnapshot,
   Notification,
 } from "./types";
+import {
+  generateLeaveId,
+  generateCommentId,
+  generateNoteId,
+  generateNotificationId,
+} from "./ids";
 import { LEAVE_TYPE_LABELS, formatDateRange } from "./leave-calculator";
 import { sendMail } from "./mailer";
 
-const employeesCol = adminDb.collection("employees");
-const leavesCol = adminDb.collection("leaves");
-const commentsCol = adminDb.collection("leaveComments");
-const internalNotesCol = adminDb.collection("internalNotes");
-const holidaysCol = adminDb.collection("holidays");
-const openingBalancesCol = adminDb.collection("openingBalances");
-const balanceSnapshotsCol = adminDb.collection("balanceSnapshots");
-const notificationsCol = adminDb.collection("notifications");
+// ── Date/decimal <-> plain-object conversion helpers ────────────
+// The app talks in plain strings/numbers throughout (ISO date strings,
+// JS numbers) - Postgres wants real DATE/DECIMAL columns. These helpers
+// keep that boundary in one place. "" is treated as "no value" on the app
+// side (the shape the Sheet-sync/UI code already produces for optional
+// dates/emails) and maps to SQL NULL, not the literal string "".
+function dateToStr(d: Date): string {
+  return d.toISOString().split("T")[0];
+}
+function strToDate(s: string | undefined | null): Date | null {
+  return s ? new Date(s) : null;
+}
+function strToDateRequired(s: string): Date {
+  return new Date(s);
+}
+
+// Every table row we hand back through db.ts's public API keeps returning
+// plain objects shaped exactly like the old Firestore doc data, so nothing
+// above this file (routes, leave-calculator.ts, sheets-sync.ts) needs to
+// change.
+function rowToEmployee(row: {
+  id: string;
+  name: string;
+  email: string;
+  joiningDate: Date;
+  designation: string;
+  department: string;
+  employeeType: string;
+  managerEmail: string | null;
+  probationEndDate: Date | null;
+  role: string;
+  status: string;
+  fullTimeEffectiveDate: Date | null;
+  gender: string | null;
+  contractType: string;
+}): Employee {
+  return {
+    id: row.id,
+    name: row.name,
+    email: row.email,
+    joiningDate: dateToStr(row.joiningDate),
+    designation: row.designation,
+    department: row.department,
+    employeeType: row.employeeType as EmployeeType,
+    managerEmail: row.managerEmail ?? "",
+    probationEndDate: row.probationEndDate ? dateToStr(row.probationEndDate) : "",
+    role: row.role as Role,
+    status: row.status as "active" | "inactive",
+    fullTimeEffectiveDate: row.fullTimeEffectiveDate
+      ? dateToStr(row.fullTimeEffectiveDate)
+      : "",
+    gender: (row.gender ?? "") as Gender,
+    contractType: row.contractType as ContractType,
+  };
+}
+
+function rowToLeaveRequest(row: {
+  id: string;
+  employeeEmail: string;
+  employeeName: string;
+  leaveType: string;
+  startDate: Date;
+  endDate: Date;
+  days: { toNumber(): number };
+  daysByYear: unknown;
+  halfDayPeriod: string | null;
+  extraWorkStartDate: Date | null;
+  extraWorkEndDate: Date | null;
+  reason: string;
+  status: string;
+  appliedOn: Date;
+  reviewedBy: string;
+  reviewedOn: string;
+  reviewerComments: string;
+  rejectedByRole: string | null;
+}): LeaveRequest {
+  return {
+    id: row.id,
+    employeeEmail: row.employeeEmail,
+    employeeName: row.employeeName,
+    leaveType: row.leaveType as LeaveType,
+    startDate: dateToStr(row.startDate),
+    endDate: dateToStr(row.endDate),
+    days: row.days.toNumber(),
+    daysByYear: (row.daysByYear as Record<string, number>) ?? {},
+    ...(row.halfDayPeriod
+      ? { halfDayPeriod: row.halfDayPeriod as "first_half" | "second_half" }
+      : {}),
+    ...(row.extraWorkStartDate
+      ? { extraWorkStartDate: dateToStr(row.extraWorkStartDate) }
+      : {}),
+    ...(row.extraWorkEndDate
+      ? { extraWorkEndDate: dateToStr(row.extraWorkEndDate) }
+      : {}),
+    reason: row.reason,
+    status: row.status as LeaveStatus,
+    appliedOn: row.appliedOn.toISOString(),
+    reviewedBy: row.reviewedBy,
+    reviewedOn: row.reviewedOn,
+    reviewerComments: row.reviewerComments,
+    ...(row.rejectedByRole
+      ? { rejectedByRole: row.rejectedByRole as "manager" | "admin" }
+      : {}),
+  };
+}
+
+function rowToComment(row: {
+  id: string;
+  leaveId: string;
+  authorEmail: string;
+  authorName: string;
+  comment: string;
+  createdAt: Date;
+}): LeaveComment {
+  return {
+    id: row.id,
+    leaveId: row.leaveId,
+    authorEmail: row.authorEmail,
+    authorName: row.authorName,
+    comment: row.comment,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+function rowToHoliday(row: { date: Date; name: string }): Holiday {
+  return { date: dateToStr(row.date), name: row.name };
+}
+
+// LeaveBalance's "ladies_wfh" key doesn't match Postgres column-naming
+// convention, so the Prisma column is "ladiesWfh" - every other key is
+// identical between the two, so only this one needs remapping.
+function rowToOpeningBalance(row: {
+  email: string;
+  sick: { toNumber(): number } | null;
+  casual: { toNumber(): number } | null;
+  annual: { toNumber(): number } | null;
+  marriage: { toNumber(): number } | null;
+  maternity: { toNumber(): number } | null;
+  paternity: { toNumber(): number } | null;
+  ladiesWfh: { toNumber(): number } | null;
+  compassionate: { toNumber(): number } | null;
+  compensatory: { toNumber(): number } | null;
+  wfh: { toNumber(): number } | null;
+  unpaid: { toNumber(): number } | null;
+}): OpeningBalance {
+  const result: OpeningBalance = { email: row.email };
+  if (row.sick !== null) result.sick = row.sick.toNumber();
+  if (row.casual !== null) result.casual = row.casual.toNumber();
+  if (row.annual !== null) result.annual = row.annual.toNumber();
+  if (row.marriage !== null) result.marriage = row.marriage.toNumber();
+  if (row.maternity !== null) result.maternity = row.maternity.toNumber();
+  if (row.paternity !== null) result.paternity = row.paternity.toNumber();
+  if (row.ladiesWfh !== null) result.ladies_wfh = row.ladiesWfh.toNumber();
+  if (row.compassionate !== null)
+    result.compassionate = row.compassionate.toNumber();
+  if (row.compensatory !== null)
+    result.compensatory = row.compensatory.toNumber();
+  if (row.wfh !== null) result.wfh = row.wfh.toNumber();
+  if (row.unpaid !== null) result.unpaid = row.unpaid.toNumber();
+  return result;
+}
+
+function rowToBalanceSnapshot(row: {
+  email: string;
+  casualEntitled: { toNumber(): number } | null;
+  casualTaken: { toNumber(): number } | null;
+  casualBalance: { toNumber(): number } | null;
+  sickEntitled: { toNumber(): number } | null;
+  sickTaken: { toNumber(): number } | null;
+  sickBalance: { toNumber(): number } | null;
+  annualEntitled: { toNumber(): number } | null;
+  annualTaken: { toNumber(): number } | null;
+  annualBalance: { toNumber(): number } | null;
+  importedAt: Date;
+}): BalanceSnapshot {
+  const result: BalanceSnapshot = { email: row.email, importedAt: row.importedAt.toISOString() };
+  if (row.casualEntitled !== null)
+    result.casual = {
+      entitled: row.casualEntitled.toNumber(),
+      taken: row.casualTaken!.toNumber(),
+      balance: row.casualBalance!.toNumber(),
+    };
+  if (row.sickEntitled !== null)
+    result.sick = {
+      entitled: row.sickEntitled.toNumber(),
+      taken: row.sickTaken!.toNumber(),
+      balance: row.sickBalance!.toNumber(),
+    };
+  if (row.annualEntitled !== null)
+    result.annual = {
+      entitled: row.annualEntitled.toNumber(),
+      taken: row.annualTaken!.toNumber(),
+      balance: row.annualBalance!.toNumber(),
+    };
+  return result;
+}
+
+function rowToNotification(row: {
+  id: string;
+  recipientEmail: string;
+  leaveId: string;
+  leaveType: string;
+  employeeName: string;
+  commentAuthorName: string;
+  commentPreview: string;
+  isInternalNote: boolean;
+  isSubmission: boolean;
+  read: boolean;
+  createdAt: Date;
+}): Notification {
+  return {
+    id: row.id,
+    recipientEmail: row.recipientEmail,
+    leaveId: row.leaveId,
+    leaveType: row.leaveType as LeaveType,
+    employeeName: row.employeeName,
+    commentAuthorName: row.commentAuthorName,
+    commentPreview: row.commentPreview,
+    isInternalNote: row.isInternalNote,
+    isSubmission: row.isSubmission,
+    read: row.read,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
+  return chunks;
+}
 
 // ── Employees ──────────────────────────────────────────────────
 
@@ -28,112 +261,144 @@ const notificationsCol = adminDb.collection("notifications");
 // current caller is the admin-only /api/employees route, which needs to
 // show inactive employees too.
 export async function getEmployees(): Promise<Employee[]> {
-  const snap = await employeesCol.get();
-  return snap.docs.map((d) => d.data() as Employee);
+  const rows = await prisma.employee.findMany();
+  return rows.map(rowToEmployee);
 }
 
 export async function getEmployeeByEmail(
   email: string
 ): Promise<Employee | null> {
-  const doc = await employeesCol.doc(email.toLowerCase()).get();
-  return doc.exists ? (doc.data() as Employee) : null;
+  const row = await prisma.employee.findUnique({
+    where: { email: email.toLowerCase() },
+  });
+  return row ? rowToEmployee(row) : null;
 }
 
 // Resolves a small set of reviewer emails to display names, for showing
 // "Reviewed by <name>" instead of a raw email (History tab, Team Details'
-// "Reviewed By" column). Cheap — usually just the handful of managers/HR
-// who've actually reviewed something — via direct doc gets rather than a
-// collection query, since doc ID is already the lowercase email.
+// "Reviewed By" column).
 export async function getEmployeeNamesByEmails(
   emails: string[]
 ): Promise<Map<string, string>> {
   const unique = Array.from(
     new Set(emails.filter(Boolean).map((e) => e.toLowerCase()))
   );
-  const docs = await Promise.all(
-    unique.map((email) => employeesCol.doc(email).get())
-  );
-  const map = new Map<string, string>();
-  docs.forEach((doc, i) => {
-    if (doc.exists) map.set(unique[i], (doc.data() as Employee).name);
+  if (unique.length === 0) return new Map();
+  const rows = await prisma.employee.findMany({
+    where: { email: { in: unique } },
+    select: { email: true, name: true },
   });
-  return map;
+  return new Map(rows.map((r) => [r.email, r.name]));
 }
 
 // Resolves a small set of employee emails to departments for the analytics
-// view — leave docs don't carry a department, so it's joined in from the
-// employee doc. Direct doc gets (doc ID = lowercase email), same reasoning
-// as getEmployeeNamesByEmails: cost scales with the handful of employees on
-// leave that week, not the whole roster.
+// view — leave rows don't carry a department, so it's joined in from the
+// employee row.
 export async function getEmployeeDepartmentsByEmails(
   emails: string[]
 ): Promise<Map<string, string>> {
   const unique = Array.from(
     new Set(emails.filter(Boolean).map((e) => e.toLowerCase()))
   );
-  const docs = await Promise.all(
-    unique.map((email) => employeesCol.doc(email).get())
-  );
-  const map = new Map<string, string>();
-  docs.forEach((doc, i) => {
-    if (doc.exists) map.set(unique[i], (doc.data() as Employee).department);
+  if (unique.length === 0) return new Map();
+  const rows = await prisma.employee.findMany({
+    where: { email: { in: unique } },
+    select: { email: true, department: true },
   });
-  return map;
+  return new Map(rows.map((r) => [r.email, r.department]));
 }
 
 export async function getEmployeesByManager(
   managerEmail: string
 ): Promise<Employee[]> {
-  const snap = await employeesCol
-    .where("managerEmail", "==", managerEmail.toLowerCase())
-    .get();
-  return snap.docs.map((d) => d.data() as Employee);
+  const rows = await prisma.employee.findMany({
+    where: { managerEmail: managerEmail.toLowerCase() },
+  });
+  return rows.map(rowToEmployee);
 }
 
-// Upsert employees pulled from the Google Sheet roster (doc ID = lowercase
-// email). Chunked at Firestore's 500-writes-per-batch limit.
+// Upsert employees pulled from the Google Sheet roster. Two passes: first
+// every employee row is written with managerEmail left unset, then
+// managerEmail is filled in on a second pass once every row exists — the
+// self-referencing manager FK would otherwise fail depending on manager-vs-
+// reportee ordering in the sheet.
 export async function upsertEmployeesFromSheet(
   employees: Employee[]
 ): Promise<void> {
-  for (let i = 0; i < employees.length; i += 500) {
-    const chunk = employees.slice(i, i + 500);
-    const batch = adminDb.batch();
-    for (const emp of chunk) {
-      batch.set(employeesCol.doc(emp.email.toLowerCase()), emp);
-    }
-    await batch.commit();
+  for (const batch of chunk(employees, 200)) {
+    await Promise.all(
+      batch.map((emp) => {
+        const email = emp.email.toLowerCase();
+        const shared = {
+          name: emp.name,
+          joiningDate: strToDateRequired(emp.joiningDate),
+          designation: emp.designation,
+          department: emp.department,
+          employeeType: emp.employeeType,
+          probationEndDate: strToDate(emp.probationEndDate),
+          role: emp.role,
+          status: emp.status,
+          fullTimeEffectiveDate: strToDate(emp.fullTimeEffectiveDate),
+          gender: emp.gender || null,
+          contractType: emp.contractType,
+        };
+        return prisma.employee.upsert({
+          where: { email },
+          create: { email, id: email, ...shared },
+          update: shared,
+        });
+      })
+    );
+  }
+  for (const batch of chunk(employees, 200)) {
+    await Promise.all(
+      batch.map((emp) =>
+        prisma.employee.update({
+          where: { email: emp.email.toLowerCase() },
+          data: {
+            managerEmail: emp.managerEmail ? emp.managerEmail.toLowerCase() : null,
+          },
+        })
+      )
+    );
   }
 }
 
 // ── Holidays ───────────────────────────────────────────────────
 
 export async function getHolidays(): Promise<Holiday[]> {
-  const snap = await holidaysCol.get();
-  return snap.docs.map((d) => d.data() as Holiday);
+  const rows = await prisma.holiday.findMany();
+  return rows.map(rowToHoliday);
 }
 
-// Membership check for a specific handful of dates (doc ID = the date
-// string) — direct doc gets instead of scanning the whole collection.
-// Returns the subset of the given dates that are holidays.
+// Membership check for a specific handful of dates — returns the subset of
+// the given dates that are holidays.
 export async function getHolidaysByDates(
   dates: string[]
 ): Promise<Set<string>> {
-  const docs = await Promise.all(dates.map((d) => holidaysCol.doc(d).get()));
-  return new Set(docs.filter((d) => d.exists).map((d) => d.id));
+  if (dates.length === 0) return new Set();
+  const rows = await prisma.holiday.findMany({
+    where: { date: { in: dates.map((d) => strToDateRequired(d)) } },
+    select: { date: true },
+  });
+  return new Set(rows.map((r) => dateToStr(r.date)));
 }
 
-// Upsert holidays pulled from the Google Sheet roster (doc ID = the date
-// string, so re-syncing the same date naturally dedupes).
+// Upsert holidays pulled from the Google Sheet roster (re-syncing the same
+// date naturally dedupes, since date is the primary key).
 export async function upsertHolidaysFromSheet(
   holidays: Holiday[]
 ): Promise<void> {
-  for (let i = 0; i < holidays.length; i += 500) {
-    const chunk = holidays.slice(i, i + 500);
-    const batch = adminDb.batch();
-    for (const holiday of chunk) {
-      batch.set(holidaysCol.doc(holiday.date), holiday);
-    }
-    await batch.commit();
+  for (const batch of chunk(holidays, 200)) {
+    await Promise.all(
+      batch.map((holiday) =>
+        prisma.holiday.upsert({
+          where: { date: strToDateRequired(holiday.date) },
+          create: { date: strToDateRequired(holiday.date), name: holiday.name },
+          update: { name: holiday.name },
+        })
+      )
+    );
   }
 }
 
@@ -142,35 +407,53 @@ export async function upsertHolidaysFromSheet(
 export async function getOpeningBalance(
   email: string
 ): Promise<OpeningBalance | null> {
-  const doc = await openingBalancesCol.doc(email.toLowerCase()).get();
-  return doc.exists ? (doc.data() as OpeningBalance) : null;
+  const row = await prisma.openingBalance.findUnique({
+    where: { email: email.toLowerCase() },
+  });
+  return row ? rowToOpeningBalance(row) : null;
 }
 
-// Upsert opening balances pulled from the Google Sheet roster (doc ID =
-// lowercase email). Chunked at Firestore's 500-writes-per-batch limit.
+// Upsert opening balances pulled from the Google Sheet roster. Employee
+// rows must already exist (email is a foreign key) — the sync route runs
+// this after the employee upsert, not in parallel with it.
 export async function upsertOpeningBalancesFromSheet(
   balances: OpeningBalance[]
 ): Promise<void> {
-  for (let i = 0; i < balances.length; i += 500) {
-    const chunk = balances.slice(i, i + 500);
-    const batch = adminDb.batch();
-    for (const balance of chunk) {
-      batch.set(openingBalancesCol.doc(balance.email.toLowerCase()), balance);
-    }
-    await batch.commit();
+  for (const batch of chunk(balances, 200)) {
+    await Promise.all(
+      batch.map((balance) => {
+        const email = balance.email.toLowerCase();
+        const data = {
+          sick: balance.sick ?? null,
+          casual: balance.casual ?? null,
+          annual: balance.annual ?? null,
+          marriage: balance.marriage ?? null,
+          maternity: balance.maternity ?? null,
+          paternity: balance.paternity ?? null,
+          ladiesWfh: balance.ladies_wfh ?? null,
+          compassionate: balance.compassionate ?? null,
+          compensatory: balance.compensatory ?? null,
+          wfh: balance.wfh ?? null,
+          unpaid: balance.unpaid ?? null,
+        };
+        return prisma.openingBalance.upsert({
+          where: { email },
+          create: { email, ...data },
+          update: data,
+        });
+      })
+    );
   }
 }
 
-// One collection read instead of one read-attempt per employee — used by
-// the admin balances table, which otherwise pays a Firestore read for every
-// employee even when most have no opening balance at all.
+// One query instead of one read-attempt per employee — used by the admin
+// balances table, which otherwise pays a read for every employee even when
+// most have no opening balance at all.
 export async function getAllOpeningBalances(): Promise<
   Map<string, OpeningBalance>
 > {
-  const snap = await openingBalancesCol.get();
-  return new Map(
-    snap.docs.map((d) => [d.id, d.data() as OpeningBalance])
-  );
+  const rows = await prisma.openingBalance.findMany();
+  return new Map(rows.map((r) => [r.email, rowToOpeningBalance(r)]));
 }
 
 // ── Historical balance snapshots (one-time import) ──────────────
@@ -178,107 +461,109 @@ export async function getAllOpeningBalances(): Promise<
 export async function getBalanceSnapshot(
   email: string
 ): Promise<BalanceSnapshot | null> {
-  const doc = await balanceSnapshotsCol.doc(email.toLowerCase()).get();
-  return doc.exists ? (doc.data() as BalanceSnapshot) : null;
+  const row = await prisma.balanceSnapshot.findUnique({
+    where: { email: email.toLowerCase() },
+  });
+  return row ? rowToBalanceSnapshot(row) : null;
 }
 
 // Used only by the one-off CSV import script, not by any sync route.
 export async function upsertBalanceSnapshots(
   snapshots: BalanceSnapshot[]
 ): Promise<void> {
-  for (let i = 0; i < snapshots.length; i += 500) {
-    const chunk = snapshots.slice(i, i + 500);
-    const batch = adminDb.batch();
-    for (const snapshot of chunk) {
-      batch.set(balanceSnapshotsCol.doc(snapshot.email.toLowerCase()), snapshot);
-    }
-    await batch.commit();
+  for (const batch of chunk(snapshots, 200)) {
+    await Promise.all(
+      batch.map((snapshot) => {
+        const email = snapshot.email.toLowerCase();
+        const data = {
+          casualEntitled: snapshot.casual?.entitled ?? null,
+          casualTaken: snapshot.casual?.taken ?? null,
+          casualBalance: snapshot.casual?.balance ?? null,
+          sickEntitled: snapshot.sick?.entitled ?? null,
+          sickTaken: snapshot.sick?.taken ?? null,
+          sickBalance: snapshot.sick?.balance ?? null,
+          annualEntitled: snapshot.annual?.entitled ?? null,
+          annualTaken: snapshot.annual?.taken ?? null,
+          annualBalance: snapshot.annual?.balance ?? null,
+          importedAt: strToDateRequired(snapshot.importedAt),
+        };
+        return prisma.balanceSnapshot.upsert({
+          where: { email },
+          create: { email, ...data },
+          update: data,
+        });
+      })
+    );
   }
 }
 
-// One collection read instead of one read-attempt per employee — same
-// reasoning as getAllOpeningBalances().
+// One query instead of one read-attempt per employee — same reasoning as
+// getAllOpeningBalances().
 export async function getAllBalanceSnapshots(): Promise<
   Map<string, BalanceSnapshot>
 > {
-  const snap = await balanceSnapshotsCol.get();
-  return new Map(snap.docs.map((d) => [d.id, d.data() as BalanceSnapshot]));
+  const rows = await prisma.balanceSnapshot.findMany();
+  return new Map(rows.map((r) => [r.email, rowToBalanceSnapshot(r)]));
 }
 
 // ── Leave Requests ─────────────────────────────────────────────
 
 export async function getLeaveRequests(): Promise<LeaveRequest[]> {
-  const snap = await leavesCol.orderBy("appliedOn", "desc").get();
-  return snap.docs.map((d) => d.data() as LeaveRequest);
+  const rows = await prisma.leave.findMany({ orderBy: { appliedOn: "desc" } });
+  return rows.map(rowToLeaveRequest);
 }
 
 export async function getLeaveById(
   leaveId: string
 ): Promise<LeaveRequest | null> {
-  const doc = await leavesCol.doc(leaveId).get();
-  return doc.exists ? (doc.data() as LeaveRequest) : null;
+  const row = await prisma.leave.findUnique({ where: { id: leaveId } });
+  return row ? rowToLeaveRequest(row) : null;
 }
 
 export async function getLeavesByEmployee(
   email: string
 ): Promise<LeaveRequest[]> {
-  const snap = await leavesCol
-    .where("employeeEmail", "==", email.toLowerCase())
-    .orderBy("appliedOn", "desc")
-    .get();
-  return snap.docs.map((d) => d.data() as LeaveRequest);
+  const rows = await prisma.leave.findMany({
+    where: { employeeEmail: email.toLowerCase() },
+    orderBy: { appliedOn: "desc" },
+  });
+  return rows.map(rowToLeaveRequest);
 }
 
 export async function getLeavesByStatus(
   status: string
 ): Promise<LeaveRequest[]> {
-  const snap = await leavesCol
-    .where("status", "==", status)
-    .orderBy("appliedOn", "desc")
-    .get();
-  return snap.docs.map((d) => d.data() as LeaveRequest);
+  const rows = await prisma.leave.findMany({
+    where: { status },
+    orderBy: { appliedOn: "desc" },
+  });
+  return rows.map(rowToLeaveRequest);
 }
 
 export async function getPendingLeavesForManager(
   managerEmail: string
 ): Promise<LeaveRequest[]> {
-  const reportees = await getEmployeesByManager(managerEmail);
-  const reporteeEmails = reportees.map((e) => e.email);
-  if (reporteeEmails.length === 0) return [];
-
-  // Chunked (not reporteeEmails.slice(0, 30)) so a manager with 30+
-  // reportees doesn't silently lose part of their team's queue — same
-  // pattern as getLeavesByEmployees. Sorted in memory rather than via
-  // .orderBy() to avoid needing a new composite index for "in" + orderBy on
-  // a different field.
-  const results = await Promise.all(
-    chunk30(reporteeEmails).map((c) =>
-      leavesCol.where("status", "==", "pending").where("employeeEmail", "in", c).get()
-    )
-  );
-  return results
-    .flatMap((snap) => snap.docs.map((d) => d.data() as LeaveRequest))
-    .sort(
-      (a, b) => new Date(b.appliedOn).getTime() - new Date(a.appliedOn).getTime()
-    );
+  const rows = await prisma.leave.findMany({
+    where: {
+      status: "pending",
+      employee: { managerEmail: managerEmail.toLowerCase() },
+    },
+    orderBy: { appliedOn: "desc" },
+  });
+  return rows.map(rowToLeaveRequest);
 }
 
 // Every leave HR should be able to see, from the moment it's submitted —
 // not just once a manager has forwarded it. Includes both "pending" (not
 // yet reviewed by the manager) and "manager_approved" (awaiting HR's own
 // sign-off) — HR can act on either directly (full override authority over
-// the approval workflow, including bypassing the manager stage entirely),
-// not just read them. Sorted in memory (not .orderBy()) to avoid a new
-// composite index for "in" + orderBy on a different field.
+// the approval workflow, including bypassing the manager stage entirely).
 export async function getLeavesVisibleToHR(): Promise<LeaveRequest[]> {
-  const snap = await leavesCol
-    .where("status", "in", ["pending", "manager_approved"])
-    .get();
-  return snap.docs
-    .map((d) => d.data() as LeaveRequest)
-    .sort(
-      (a, b) => new Date(b.appliedOn).getTime() - new Date(a.appliedOn).getTime()
-    );
+  const rows = await prisma.leave.findMany({
+    where: { status: { in: ["pending", "manager_approved"] } },
+    orderBy: { appliedOn: "desc" },
+  });
+  return rows.map(rowToLeaveRequest);
 }
 
 export async function createLeaveRequest(
@@ -286,30 +571,28 @@ export async function createLeaveRequest(
     LeaveRequest,
     "id" | "reviewedBy" | "reviewedOn" | "reviewerComments"
   >
-) {
-  const id = `LV-${Date.now()}`;
-  await leavesCol.doc(id).set({
-    id,
-    employeeEmail: leave.employeeEmail.toLowerCase(),
-    employeeName: leave.employeeName,
-    leaveType: leave.leaveType,
-    startDate: leave.startDate,
-    endDate: leave.endDate,
-    days: leave.days,
-    daysByYear: leave.daysByYear || {},
-    ...(leave.halfDayPeriod ? { halfDayPeriod: leave.halfDayPeriod } : {}),
-    ...(leave.extraWorkStartDate
-      ? { extraWorkStartDate: leave.extraWorkStartDate }
-      : {}),
-    ...(leave.extraWorkEndDate
-      ? { extraWorkEndDate: leave.extraWorkEndDate }
-      : {}),
-    reason: leave.reason,
-    status: leave.status,
-    appliedOn: leave.appliedOn,
-    reviewedBy: "",
-    reviewedOn: "",
-    reviewerComments: "",
+): Promise<string> {
+  const id = generateLeaveId();
+  await prisma.leave.create({
+    data: {
+      id,
+      employeeEmail: leave.employeeEmail.toLowerCase(),
+      employeeName: leave.employeeName,
+      leaveType: leave.leaveType,
+      startDate: strToDateRequired(leave.startDate),
+      endDate: strToDateRequired(leave.endDate),
+      days: leave.days,
+      daysByYear: leave.daysByYear || {},
+      halfDayPeriod: leave.halfDayPeriod ?? null,
+      extraWorkStartDate: strToDate(leave.extraWorkStartDate),
+      extraWorkEndDate: strToDate(leave.extraWorkEndDate),
+      reason: leave.reason,
+      status: leave.status,
+      appliedOn: strToDateRequired(leave.appliedOn),
+      reviewedBy: "",
+      reviewedOn: "",
+      reviewerComments: "",
+    },
   });
   return id;
 }
@@ -320,20 +603,26 @@ export async function updateLeaveStatus(
   reviewedBy: string,
   comments: string,
   rejectedByRole?: "manager" | "admin"
-) {
-  await leavesCol.doc(leaveId).update({
-    status,
-    reviewedBy,
-    reviewedOn: new Date().toISOString().split("T")[0],
-    reviewerComments: comments,
-    ...(rejectedByRole ? { rejectedByRole } : {}),
+): Promise<void> {
+  await prisma.leave.update({
+    where: { id: leaveId },
+    data: {
+      status,
+      reviewedBy,
+      reviewedOn: new Date().toISOString().split("T")[0],
+      reviewerComments: comments,
+      ...(rejectedByRole ? { rejectedByRole } : {}),
+    },
   });
 }
 
 // Admin-only correction of a request's leave type — the route calling this
 // already restricts it to pending/manager_approved requests.
-export async function updateLeaveType(leaveId: string, leaveType: LeaveType) {
-  await leavesCol.doc(leaveId).update({ leaveType });
+export async function updateLeaveType(
+  leaveId: string,
+  leaveType: LeaveType
+): Promise<void> {
+  await prisma.leave.update({ where: { id: leaveId }, data: { leaveType } });
 }
 
 // ── Approved leaves for balance calculation ────────────────────
@@ -341,39 +630,23 @@ export async function updateLeaveType(leaveId: string, leaveType: LeaveType) {
 export async function getApprovedLeavesByEmployee(
   email: string
 ): Promise<LeaveRequest[]> {
-  const snap = await leavesCol
-    .where("employeeEmail", "==", email.toLowerCase())
-    .where("status", "==", "approved")
-    .get();
-  return snap.docs.map((d) => d.data() as LeaveRequest);
-}
-
-// Firestore's "in" operator caps at 30 values — chunk larger lists (e.g. a
-// manager with a big team) and merge results, so nobody silently drops off.
-function chunk30(items: string[]): string[][] {
-  const chunks: string[][] = [];
-  for (let i = 0; i < items.length; i += 30) chunks.push(items.slice(i, i + 30));
-  return chunks;
+  const rows = await prisma.leave.findMany({
+    where: { employeeEmail: email.toLowerCase(), status: "approved" },
+  });
+  return rows.map(rowToLeaveRequest);
 }
 
 // Leaves for a specific set of employees (e.g. a manager's direct reportees)
-// — used by the Team Details page's "All Requests" tab for managers, so
-// they never trigger a full company-wide leaves scan.
+// — used by the Team Details page's "All Requests" tab for managers.
 export async function getLeavesByEmployees(
   emails: string[]
 ): Promise<LeaveRequest[]> {
   if (emails.length === 0) return [];
-  const results = await Promise.all(
-    chunk30(emails).map((c) => leavesCol.where("employeeEmail", "in", c).get())
-  );
-  return results
-    .flatMap((snap) => snap.docs.map((d) => d.data() as LeaveRequest))
-    .sort(
-      (a, b) => new Date(b.appliedOn).getTime() - new Date(a.appliedOn).getTime()
-    );
-  // Sorted in memory rather than via .orderBy() — combining "in" with an
-  // orderBy on a different field would need a new composite index; this
-  // avoids that entirely.
+  const rows = await prisma.leave.findMany({
+    where: { employeeEmail: { in: emails } },
+    orderBy: { appliedOn: "desc" },
+  });
+  return rows.map(rowToLeaveRequest);
 }
 
 // Same idea as getAllApprovedLeavesGroupedByEmployee(), but scoped to a
@@ -383,34 +656,29 @@ export async function getApprovedLeavesGroupedByEmployees(
   emails: string[]
 ): Promise<Map<string, LeaveRequest[]>> {
   if (emails.length === 0) return new Map();
-  const results = await Promise.all(
-    chunk30(emails).map((c) =>
-      leavesCol.where("employeeEmail", "in", c).where("status", "==", "approved").get()
-    )
-  );
+  const rows = await prisma.leave.findMany({
+    where: { employeeEmail: { in: emails }, status: "approved" },
+  });
   const grouped = new Map<string, LeaveRequest[]>();
-  results.forEach((snap) =>
-    snap.docs.forEach((d) => {
-      const leave = d.data() as LeaveRequest;
-      grouped.set(leave.employeeEmail, [
-        ...(grouped.get(leave.employeeEmail) || []),
-        leave,
-      ]);
-    })
-  );
+  rows.forEach((row) => {
+    const leave = rowToLeaveRequest(row);
+    grouped.set(leave.employeeEmail, [
+      ...(grouped.get(leave.employeeEmail) || []),
+      leave,
+    ]);
+  });
   return grouped;
 }
 
 // One query for every approved leave company-wide, grouped by employee —
-// used by the admin balances table instead of querying per employee (which
-// costs a read for every employee even ones with zero approved leaves).
+// used by the admin balances table instead of querying per employee.
 export async function getAllApprovedLeavesGroupedByEmployee(): Promise<
   Map<string, LeaveRequest[]>
 > {
-  const snap = await leavesCol.where("status", "==", "approved").get();
+  const rows = await prisma.leave.findMany({ where: { status: "approved" } });
   const grouped = new Map<string, LeaveRequest[]>();
-  snap.docs.forEach((d) => {
-    const leave = d.data() as LeaveRequest;
+  rows.forEach((row) => {
+    const leave = rowToLeaveRequest(row);
     const list = grouped.get(leave.employeeEmail) || [];
     list.push(leave);
     grouped.set(leave.employeeEmail, list);
@@ -419,21 +687,19 @@ export async function getAllApprovedLeavesGroupedByEmployee(): Promise<
 }
 
 // Approved leaves whose date range overlaps [rangeStart, rangeEnd] — used
-// by the analytics weekday chart. Multi-field range query (needs the
-// (status, endDate, startDate) composite index in firestore.indexes.json —
-// deploy it or this throws). String comparison is safe: dates are
-// "YYYY-MM-DD". Reads only overlapping docs, so it stays cheap even after
-// the historical import grows the collection.
+// by the analytics weekday chart.
 export async function getApprovedLeavesOverlapping(
   rangeStart: string,
   rangeEnd: string
 ): Promise<LeaveRequest[]> {
-  const snap = await leavesCol
-    .where("status", "==", "approved")
-    .where("startDate", "<=", rangeEnd)
-    .where("endDate", ">=", rangeStart)
-    .get();
-  return snap.docs.map((d) => d.data() as LeaveRequest);
+  const rows = await prisma.leave.findMany({
+    where: {
+      status: "approved",
+      startDate: { lte: strToDateRequired(rangeEnd) },
+      endDate: { gte: strToDateRequired(rangeStart) },
+    },
+  });
+  return rows.map(rowToLeaveRequest);
 }
 
 // ── Leave Comments ─────────────────────────────────────────────
@@ -441,11 +707,11 @@ export async function getApprovedLeavesOverlapping(
 export async function getCommentsByLeave(
   leaveId: string
 ): Promise<LeaveComment[]> {
-  const snap = await commentsCol
-    .where("leaveId", "==", leaveId)
-    .orderBy("createdAt", "asc")
-    .get();
-  return snap.docs.map((d) => d.data() as LeaveComment);
+  const rows = await prisma.leaveComment.findMany({
+    where: { leaveId },
+    orderBy: { createdAt: "asc" },
+  });
+  return rows.map(rowToComment);
 }
 
 export async function addComment(
@@ -456,16 +722,19 @@ export async function addComment(
   isSubmission = false,
   suppressEmail = false
 ): Promise<LeaveComment> {
-  const id = `CMT-${Date.now()}`;
+  const id = generateCommentId();
+  const createdAt = new Date();
+  await prisma.leaveComment.create({
+    data: { id, leaveId, authorEmail, authorName, comment, createdAt },
+  });
   const data: LeaveComment = {
     id,
     leaveId,
     authorEmail,
     authorName,
     comment,
-    createdAt: new Date().toISOString(),
+    createdAt: createdAt.toISOString(),
   };
-  await commentsCol.doc(id).set(data);
   await notifyRecipients(
     leaveId,
     authorEmail,
@@ -516,20 +785,21 @@ async function notifyRecipients(
     recipients.add(employee.managerEmail.toLowerCase());
   }
 
-  const adminSnap = await employeesCol.where("role", "==", "admin").get();
-  adminSnap.docs.forEach((d) =>
-    recipients.add((d.data() as Employee).email.toLowerCase())
-  );
+  // No status filter here, deliberately — matches prior behavior exactly
+  // (every employee with role "admin" is notified, active or not).
+  const admins = await prisma.employee.findMany({
+    where: { role: "admin" },
+    select: { email: true },
+  });
+  admins.forEach((a) => recipients.add(a.email.toLowerCase()));
 
   recipients.delete(authorEmail.toLowerCase());
   if (recipients.size === 0) return;
 
-  const batch = adminDb.batch();
-  const createdAt = new Date().toISOString();
-  recipients.forEach((recipientEmail) => {
-    const notifId = `NOTIF-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const notification: Notification = {
-      id: notifId,
+  const createdAt = new Date();
+  await prisma.notification.createMany({
+    data: Array.from(recipients).map((recipientEmail) => ({
+      id: generateNotificationId(),
       recipientEmail,
       leaveId,
       leaveType: leave.leaveType,
@@ -540,10 +810,8 @@ async function notifyRecipients(
       isSubmission,
       read: false,
       createdAt,
-    };
-    batch.set(notificationsCol.doc(notifId), notification);
+    })),
   });
-  await batch.commit();
 
   if (suppressEmail) return;
 
@@ -581,35 +849,28 @@ async function notifyRecipients(
 }
 
 // ── Notifications ───────────────────────────────────────────────
-// No orderBy in the query (avoids needing a composite index that then has
-// to be manually deployed — see the HR-approval index gotcha already hit
-// once in production); sorted in memory instead. Scoped to one recipient's
-// own notifications, not a collection-wide scan, so this stays cheap.
 
 export async function getNotificationsForUser(
   email: string,
   limitCount = 30
 ): Promise<Notification[]> {
-  const snap = await notificationsCol
-    .where("recipientEmail", "==", email.toLowerCase())
-    .get();
-  return snap.docs
-    .map((d) => d.data() as Notification)
-    .sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    )
-    .slice(0, limitCount);
+  const rows = await prisma.notification.findMany({
+    where: { recipientEmail: email.toLowerCase() },
+    orderBy: { createdAt: "desc" },
+    take: limitCount,
+  });
+  return rows.map(rowToNotification);
 }
 
 export async function getNotificationById(
   id: string
 ): Promise<Notification | null> {
-  const doc = await notificationsCol.doc(id).get();
-  return doc.exists ? (doc.data() as Notification) : null;
+  const row = await prisma.notification.findUnique({ where: { id } });
+  return row ? rowToNotification(row) : null;
 }
 
 export async function markNotificationRead(id: string): Promise<void> {
-  await notificationsCol.doc(id).update({ read: true });
+  await prisma.notification.update({ where: { id }, data: { read: true } });
 }
 
 // ── Internal notes (manager/admin only — never exposed to the employee) ──
@@ -617,11 +878,11 @@ export async function markNotificationRead(id: string): Promise<void> {
 export async function getInternalNotesByLeave(
   leaveId: string
 ): Promise<LeaveComment[]> {
-  const snap = await internalNotesCol
-    .where("leaveId", "==", leaveId)
-    .orderBy("createdAt", "asc")
-    .get();
-  return snap.docs.map((d) => d.data() as LeaveComment);
+  const rows = await prisma.internalNote.findMany({
+    where: { leaveId },
+    orderBy: { createdAt: "asc" },
+  });
+  return rows.map(rowToComment);
 }
 
 export async function addInternalNote(
@@ -631,16 +892,19 @@ export async function addInternalNote(
   comment: string,
   suppressEmail = false
 ): Promise<LeaveComment> {
-  const id = `NOTE-${Date.now()}`;
+  const id = generateNoteId();
+  const createdAt = new Date();
+  await prisma.internalNote.create({
+    data: { id, leaveId, authorEmail, authorName, comment, createdAt },
+  });
   const data: LeaveComment = {
     id,
     leaveId,
     authorEmail,
     authorName,
     comment,
-    createdAt: new Date().toISOString(),
+    createdAt: createdAt.toISOString(),
   };
-  await internalNotesCol.doc(id).set(data);
   await notifyRecipients(
     leaveId,
     authorEmail,
