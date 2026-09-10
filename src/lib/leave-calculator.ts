@@ -15,6 +15,8 @@ import {
   isBefore,
   addDays,
   format,
+  differenceInCalendarDays,
+  endOfMonth,
 } from "date-fns";
 
 // ── Helpers ─────────────────────────────────────────────────────
@@ -78,6 +80,8 @@ export const MATERNITY_PATERNITY_LIFETIME_CAP = 2;
 export const MARRIAGE_MAX_DAYS = 7;
 export const PATERNITY_MAX_DAYS = 14;
 export const MATERNITY_MAX_DAYS = 180;
+export const ANNUAL_LEAVE_ACCRUAL_DIVISOR = 24.33;
+export const ANNUAL_LEAVE_LIFETIME_CAP = 60;
 
 // Whether a leave only needs Manager approval, skipping HR entirely — true
 // for tele-sales employees (any leave type), or for any of
@@ -115,16 +119,24 @@ export function formatDateRange(startDate: string, endDate: string): string {
   return `${format(start, "d MMM, yyyy")} - ${format(end, "d MMM, yyyy")}`;
 }
 
-// Company weekend is Friday/Saturday.
+// Company weekend is Friday/Saturday, unless the specific date is in
+// workingWeekendSet (a team came in to make up for a holiday landing
+// mid-week) — that overrides the default weekend exclusion, but a date
+// explicitly marked a holiday is always excluded regardless.
 // Note: compare using local-time yyyy-MM-dd (via date-fns `format`), not
 // `date.toISOString()` — toISOString() converts to UTC, which silently
 // shifts the date by a day in any timezone ahead of UTC and would never
 // match the holiday dates as stored (which are plain "yyyy-MM-dd" strings
 // interpreted as local time everywhere else via parseISO).
-function isExcludedDay(date: Date, holidaySet: Set<string>): boolean {
+function isExcludedDay(
+  date: Date,
+  holidaySet: Set<string>,
+  workingWeekendSet: Set<string>
+): boolean {
+  const dateStr = format(date, "yyyy-MM-dd");
+  if (holidaySet.has(dateStr)) return true;
   const day = date.getDay(); // 0 = Sunday ... 5 = Friday, 6 = Saturday
-  if (day === 5 || day === 6) return true;
-  return holidaySet.has(format(date, "yyyy-MM-dd"));
+  return (day === 5 || day === 6) && !workingWeekendSet.has(dateStr);
 }
 
 // Splits a leave's day count by calendar year — most requests fall entirely
@@ -132,19 +144,22 @@ function isExcludedDay(date: Date, holidaySet: Set<string>): boolean {
 // Year's (e.g. Dec 30 – Jan 2) needs its days attributed to each year
 // separately, so each year's balance is only charged for the days that
 // actually fall within it. Excludes the weekend and any date in
-// holidayDates, same as the day-counting this replaces.
+// holidayDates (unless overridden by workingWeekendDates), same as the
+// day-counting this replaces.
 export function splitDaysByYear(
   startDate: string,
   endDate: string,
   halfDayPeriod: HalfDayPeriod | "" | undefined,
-  holidayDates: string[]
+  holidayDates: string[],
+  workingWeekendDates: string[] = []
 ): Record<string, number> {
   const holidaySet = new Set(holidayDates);
+  const workingWeekendSet = new Set(workingWeekendDates);
   const result: Record<string, number> = {};
 
   if (halfDayPeriod) {
     const date = parseISO(startDate);
-    if (!isExcludedDay(date, holidaySet)) {
+    if (!isExcludedDay(date, holidaySet, workingWeekendSet)) {
       result[String(date.getFullYear())] = 0.5;
     }
     return result;
@@ -153,7 +168,7 @@ export function splitDaysByYear(
   let cursor = parseISO(startDate);
   const end = parseISO(endDate);
   while (!isAfter(cursor, end)) {
-    if (!isExcludedDay(cursor, holidaySet)) {
+    if (!isExcludedDay(cursor, holidaySet, workingWeekendSet)) {
       const key = String(cursor.getFullYear());
       result[key] = (result[key] || 0) + 1;
     }
@@ -163,17 +178,19 @@ export function splitDaysByYear(
 }
 
 // Counts leave days between startDate/endDate (inclusive), excluding the
-// weekend and any date in holidayDates. Half-day requests are always a
-// single date and count as 0.5 — unless that date itself is excluded, in
-// which case there's nothing to apply for (caller should block submission).
+// weekend and any date in holidayDates (unless overridden by
+// workingWeekendDates). Half-day requests are always a single date and
+// count as 0.5 — unless that date itself is excluded, in which case
+// there's nothing to apply for (caller should block submission).
 export function calculateLeaveDays(
   startDate: string,
   endDate: string,
   halfDayPeriod: HalfDayPeriod | "" | undefined,
-  holidayDates: string[]
+  holidayDates: string[],
+  workingWeekendDates: string[] = []
 ): number {
   return Object.values(
-    splitDaysByYear(startDate, endDate, halfDayPeriod, holidayDates)
+    splitDaysByYear(startDate, endDate, halfDayPeriod, holidayDates, workingWeekendDates)
   ).reduce((sum, d) => sum + d, 0);
 }
 
@@ -187,9 +204,37 @@ function monthsWorkedInYear(joiningDate: Date, year: number): number {
   return 12 - effectiveStart.getMonth();
 }
 
-function isOnProbation(employee: Employee, asOfDate: Date): boolean {
+export function isOnProbation(employee: Employee, asOfDate: Date): boolean {
   if (!employee.probationEndDate) return false;
   return isBefore(asOfDate, parseISO(employee.probationEndDate));
+}
+
+// Matches the authoritative HR sheet's "EDOR" column: end of the current
+// month for an active employee. We don't yet track an exact last-working-
+// day field for someone who's gone inactive (the sheet freezes EDOR there
+// instead) — until we do, inactive employees use the same end-of-month
+// rule as active ones. This only affects the *displayed* number on the
+// admin balances table for someone no longer employed; it can't affect a
+// live application either way, since getCurrentUser() already requires
+// status === "active" to do anything in the portal.
+function annualLeaveAccrualAsOfDate(today: Date): Date {
+  return endOfMonth(today);
+}
+
+// Lifetime AL entitlement: zero until probation ends, then 1 day per
+// ANNUAL_LEAVE_ACCRUAL_DIVISOR calendar days of service, capped at
+// ANNUAL_LEAVE_LIFETIME_CAP — a running total, not a per-calendar-year
+// allowance. Matches the HR sheet's N2 formula exactly (confirmed with the
+// user against the live sheet, 2026-09-09).
+function annualLeaveEntitlement(employee: Employee, asOfDate: Date): number {
+  if (isOnProbation(employee, asOfDate)) return 0;
+  const ftDate = employee.fullTimeEffectiveDate
+    ? parseISO(employee.fullTimeEffectiveDate)
+    : parseISO(employee.joiningDate);
+  const accrualDate = annualLeaveAccrualAsOfDate(asOfDate);
+  const daysSinceJoining = differenceInCalendarDays(accrualDate, ftDate);
+  const raw = Math.ceil(daysSinceJoining / ANNUAL_LEAVE_ACCRUAL_DIVISOR);
+  return Math.min(raw, ANNUAL_LEAVE_LIFETIME_CAP);
 }
 
 // ── Tele-sales balance ──────────────────────────────────────────
@@ -239,9 +284,12 @@ function freelancerEntitlement(): LeaveBalance {
 // During probation: 1 SL + 1 CL per month
 // After probation: full pro-rata SL (14/yr) + CL (10/yr)
 //   Pro-rata: 14 minus months missed (Jan=0 missed, Feb=1 missed, etc.)
-// AL: 15 days/year, pro-rata. Not available during probation but accrues.
-//   AL accrual per month = calendar days from joining to EOM / 24.33, rounded up
-// Carry forward: max 10 AL/year, lifetime max 60
+// AL: lifetime running total, zero until probation ends, then 1 day per
+//   ANNUAL_LEAVE_ACCRUAL_DIVISOR (24.33) calendar days of service since the
+//   FT/joining date, capped at ANNUAL_LEAVE_LIFETIME_CAP (60) — NOT a
+//   per-calendar-year allowance like SL/CL above. See
+//   annualLeaveEntitlement(). Matches the authoritative HR sheet's own
+//   formula exactly (confirmed with the user 2026-09-09).
 //
 // For tele-sales→FT transitions (fullTimeEffectiveDate is set):
 //   SL, CL, AL calculated from the FT effective date, same rules.
@@ -284,16 +332,10 @@ function nonTeleSalesEntitlement(
     casualEntitled = 10;
   }
 
-  // ── Annual Leave: 15 days/year ──
-  // Monthly accrual: (calendar days from joining to EOM) / 24.33, rounded up
-  // Not available during probation but accrues
-  let annualEntitled: number;
-  if (year === ftYear) {
-    const monthsRemaining = 12 - ftDate.getMonth();
-    annualEntitled = Math.ceil((monthsRemaining / 12) * 15);
-  } else {
-    annualEntitled = 15;
-  }
+  // ── Annual Leave: lifetime running total, capped at 60, zero during
+  // probation — see annualLeaveEntitlement(). Not year-scoped like sick/
+  // casual above, so the `year` param is deliberately unused here.
+  const annualEntitled = annualLeaveEntitlement(employee, asOfDate);
 
   return {
     sick: sickEntitled,
@@ -346,6 +388,14 @@ function calculateUsed(
         : 0);
     used[balanceKey] += yearDays;
   }
+
+  // Annual leave is a lifetime running balance, not year-scoped (see
+  // annualLeaveEntitlement) — used.annual must be every approved annual
+  // leave ever, not just targetYear's portion, or remaining.annual would
+  // be compared against the wrong "used so far" number.
+  used.annual = approvedLeaves
+    .filter((l) => l.leaveType === "annual")
+    .reduce((sum, l) => sum + l.days, 0);
 
   return used;
 }
@@ -446,7 +496,13 @@ export function calculateBalance(
   const remaining: LeaveBalance = {
     sick: Math.max(entitled.sick - used.sick, 0),
     casual: Math.max(entitled.casual - used.casual, 0),
-    annual: Math.max(entitled.annual - used.annual, 0),
+    // Deliberately not floored at 0 — the only place a balance is allowed
+    // to go negative, for the admin-granted probation exception (see
+    // getAvailableLeaveTypes/validateLeaveRequest below). Every other type
+    // stays floored; the balance-sufficiency check in validateLeaveRequest
+    // still prevents used.annual from ever exceeding entitled.annual
+    // through any other path.
+    annual: entitled.annual - used.annual,
     marriage: Math.max(entitled.marriage - used.marriage, 0),
     maternity: Math.max(entitled.maternity - used.maternity, 0),
     paternity: Math.max(entitled.paternity - used.paternity, 0),
@@ -599,11 +655,13 @@ export function validateLeaveRequest(
     }
   }
 
-  // AL not available during probation for full-time employees
+  // AL not available during probation for full-time employees — unless
+  // this specific employee has the admin-granted exception.
   if (
     leaveType === "annual" &&
     employee.contractType === "full-time" &&
-    onProbation
+    onProbation &&
+    !employee.probationAnnualLeaveApproved
   ) {
     return {
       valid: false,
@@ -658,10 +716,39 @@ export function validateLeaveRequest(
   // SL > 3 days requires medical certificate (warn, don't block)
   // We allow submission but the UI can show a notice
 
-  // Check remaining balance — per year, since a request spanning New Year's
-  // draws from two separate years' balances (see daysByYear). Skipped
-  // entirely for unlimited types, which have no LeaveBalance entry to check.
-  if (!UNLIMITED_LEAVE_TYPES.includes(leaveType)) {
+  // Check remaining balance. Skipped entirely for unlimited types (no
+  // LeaveBalance entry to check), and for annual leave during probation
+  // when the admin-granted exception applies — going negative is the
+  // whole point of that exception, not a bug.
+  const skipBalanceCheck =
+    UNLIMITED_LEAVE_TYPES.includes(leaveType) ||
+    (leaveType === "annual" && onProbation && employee.probationAnnualLeaveApproved);
+
+  if (!skipBalanceCheck && leaveType === "annual") {
+    // Annual leave is a lifetime running balance (see
+    // annualLeaveEntitlement), not year-scoped like every other type —
+    // entitled/used/remaining.annual are identical across every year in
+    // balancesByYear, so checking each year's daysByYear portion
+    // separately (like the loop below does for other types) would let a
+    // New Year's-spanning request slip through on lifetime-insufficient
+    // balance, since e.g. "3 < remaining" and "2 < remaining" can both
+    // individually pass even when only 4 lifetime days are actually left.
+    // Check the request's total `days` against the lifetime remaining
+    // once, instead.
+    const startYear = String(parseISO(requestStartDate).getFullYear());
+    const yearBalance = balancesByYear[startYear];
+    if (!yearBalance || yearBalance.remaining.annual < days) {
+      return {
+        valid: false,
+        error: `Insufficient annual leave balance. Available: ${
+          yearBalance?.remaining.annual ?? 0
+        }, Requested: ${days}`,
+      };
+    }
+  } else if (!skipBalanceCheck) {
+    // Per year, since a request spanning New Year's draws from two
+    // separate years' balances (see daysByYear) — correct for every
+    // remaining type, which really are year-scoped.
     const balanceKey = leaveType as keyof LeaveBalance;
     for (const [yearStr, yearDays] of Object.entries(daysByYear)) {
       const yearBalance = balancesByYear[yearStr];
@@ -706,6 +793,12 @@ export function getAvailableLeaveTypes(
     "offsite_attendance",
     "wfh_deployment",
   ].filter((type) => {
+    if (type === "annual") {
+      return (
+        !isOnProbation(employee, new Date()) ||
+        employee.probationAnnualLeaveApproved
+      );
+    }
     if (type === "maternity") {
       return (
         employee.gender === "female" &&

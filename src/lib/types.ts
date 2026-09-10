@@ -24,6 +24,10 @@ export interface Employee {
   fullTimeEffectiveDate: string; // ISO date — for tele-sales→FT transitions
   gender: Gender;
   contractType: ContractType; // drives entitlement formula, not employeeType
+  // Admin-granted exception letting this specific employee select Annual
+  // Leave while still on probation (normally blocked entirely) — see
+  // leave-calculator.ts's getAvailableLeaveTypes/validateLeaveRequest.
+  probationAnnualLeaveApproved: boolean;
 }
 
 // ── Leave types ─────────────────────────────────────────────────

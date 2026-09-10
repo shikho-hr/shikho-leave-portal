@@ -2,20 +2,16 @@ import { JWT } from "google-auth-library";
 import {
   Employee,
   EmployeeType,
-  Role,
   Gender,
   ContractType,
-  Holiday,
   OpeningBalance,
   LeaveBalance,
 } from "./types";
 
 const EMPLOYEES_RANGE = "Employees!A:N";
-const HOLIDAYS_RANGE = "Holidays!A:B";
 const OPENING_BALANCES_RANGE = "OpeningBalances!A:K";
 
 const EMPLOYEE_TYPES: EmployeeType[] = ["tele-sales", "non-tele-sales"];
-const ROLES: Role[] = ["employee", "manager", "admin"];
 const STATUSES = ["active", "inactive"];
 const GENDERS: Gender[] = ["male", "female"];
 const CONTRACT_TYPES: ContractType[] = [
@@ -144,7 +140,6 @@ export async function fetchEmployeesFromSheet(): Promise<EmployeeSyncResult> {
     }
 
     const employeeType = get(row, "employeeType").toLowerCase() as EmployeeType;
-    const role = get(row, "role").toLowerCase() as Role;
     const status = get(row, "status").toLowerCase();
     const gender = get(row, "gender").toLowerCase() as Gender;
 
@@ -152,10 +147,6 @@ export async function fetchEmployeesFromSheet(): Promise<EmployeeSyncResult> {
       errors.push(
         `Row ${rowNum} (${email}): invalid employeeType "${employeeType}"`
       );
-      return;
-    }
-    if (!ROLES.includes(role)) {
-      errors.push(`Row ${rowNum} (${email}): invalid role "${role}"`);
       return;
     }
     if (!STATUSES.includes(status)) {
@@ -226,52 +217,28 @@ export async function fetchEmployeesFromSheet(): Promise<EmployeeSyncResult> {
       employeeType,
       managerEmail,
       probationEndDate: probationEndDate || "",
-      role,
+      // Role is admin-managed directly in the app now (Team Details' "Role
+      // Assigner" tab), never sheet-synced — this value is only used as
+      // the default for a genuinely new employee, and ignored entirely for
+      // an existing one. See db.ts's upsertEmployeesFromSheet.
+      role: "employee",
       status: status as Employee["status"],
       fullTimeEffectiveDate: fullTimeEffectiveDate || "",
       gender,
       contractType,
+      // Same reasoning as role above — admin-managed only, ignored by
+      // upsertEmployeesFromSheet entirely; this value is never read.
+      probationAnnualLeaveApproved: false,
     });
   });
 
   return { employees, errors };
 }
 
-// ── Holidays ───────────────────────────────────────────────────
-
-export interface HolidaySyncResult {
-  holidays: Holiday[];
-  errors: string[];
-}
-
-export async function fetchHolidaysFromSheet(): Promise<HolidaySyncResult> {
-  const values = await fetchSheetValues(HOLIDAYS_RANGE);
-  if (values.length === 0) return { holidays: [], errors: [] };
-
-  const [header, ...rows] = values;
-  const colIndex = (key: string) =>
-    header.findIndex((h) => h?.trim() === key);
-  const get = (row: string[], key: string) =>
-    (row[colIndex(key)] || "").trim();
-
-  const holidays: Holiday[] = [];
-  const errors: string[] = [];
-
-  rows.forEach((row, i) => {
-    const rowNum = i + 2;
-    const date = get(row, "date");
-    if (!date) return; // skip blank rows
-
-    if (!DATE_RE.test(date)) {
-      errors.push(`Row ${rowNum}: invalid date "${date}", expected YYYY-MM-DD`);
-      return;
-    }
-
-    holidays.push({ date, name: get(row, "name") });
-  });
-
-  return { holidays, errors };
-}
+// Holidays and working weekends used to sync from Sheet tabs here, but are
+// now managed directly in the app (Team Details' "Company Calendar" tab) to
+// avoid having two sources of truth for the same list — see
+// src/lib/db.ts's createHoliday/createWorkingWeekend.
 
 // ── Opening / carry-forward balances ───────────────────────────
 

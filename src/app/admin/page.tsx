@@ -4,6 +4,9 @@ import { useAuth } from "@/lib/AuthContext";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import Navbar from "@/components/Navbar";
+import CompanyCalendarManager from "@/components/CompanyCalendarManager";
+import RoleAssigner from "@/components/RoleAssigner";
+import ProbationAnnualLeaveAccess from "@/components/ProbationAnnualLeaveAccess";
 import { formatDate, formatDateRange } from "@/lib/leave-calculator";
 
 interface EmployeeWithBalance {
@@ -87,7 +90,9 @@ const blockDatePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
 export default function AdminDashboard() {
   const { user, status } = useAuth();
   const router = useRouter();
-  const [tab, setTab] = useState<"balances" | "requests">("balances");
+  const [tab, setTab] = useState<
+    "balances" | "requests" | "calendar" | "roles" | "probationAL"
+  >("balances");
   const [employees, setEmployees] = useState<EmployeeWithBalance[]>([]);
   const [allLeaves, setAllLeaves] = useState<LeaveRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -107,7 +112,6 @@ export default function AdminDashboard() {
   } | null>(null);
   const [syncResult, setSyncResult] = useState<{
     employeesSynced: number;
-    holidaysSynced: number;
     openingBalancesSynced: number;
     errors: string[];
   } | null>(null);
@@ -173,7 +177,6 @@ export default function AdminDashboard() {
       if (res.ok) {
         setSyncResult({
           employeesSynced: data.employeesSynced,
-          holidaysSynced: data.holidaysSynced,
           openingBalancesSynced: data.openingBalancesSynced,
           errors: data.errors || [],
         });
@@ -181,7 +184,6 @@ export default function AdminDashboard() {
       } else {
         setSyncResult({
           employeesSynced: 0,
-          holidaysSynced: 0,
           openingBalancesSynced: 0,
           errors: [data.error || "Sync failed"],
         });
@@ -189,7 +191,6 @@ export default function AdminDashboard() {
     } catch {
       setSyncResult({
         employeesSynced: 0,
-        holidaysSynced: 0,
         openingBalancesSynced: 0,
         errors: ["Network error during sync"],
       });
@@ -316,8 +317,7 @@ export default function AdminDashboard() {
             }`}
           >
             <p>
-              Synced {syncResult.employeesSynced} employees,{" "}
-              {syncResult.holidaysSynced} holidays, and{" "}
+              Synced {syncResult.employeesSynced} employees and{" "}
               {syncResult.openingBalancesSynced} opening balances.
               {syncResult.errors.length > 0 && (
                 <>
@@ -403,9 +403,44 @@ export default function AdminDashboard() {
           >
             All Requests
           </button>
+          <button
+            onClick={() => setTab("calendar")}
+            className={`px-5 py-2 rounded-xl text-sm font-semibold transition-colors ${
+              tab === "calendar"
+                ? "bg-indigo-600 text-white shadow-sm"
+                : "bg-white text-gray-600 border border-gray-200 hover:border-indigo-300"
+            }`}
+          >
+            Company Calendar
+          </button>
+          {user?.role === "admin" && (
+            <button
+              onClick={() => setTab("roles")}
+              className={`px-5 py-2 rounded-xl text-sm font-semibold transition-colors ${
+                tab === "roles"
+                  ? "bg-indigo-600 text-white shadow-sm"
+                  : "bg-white text-gray-600 border border-gray-200 hover:border-indigo-300"
+              }`}
+            >
+              Role Assigner
+            </button>
+          )}
+          {user?.role === "admin" && (
+            <button
+              onClick={() => setTab("probationAL")}
+              className={`px-5 py-2 rounded-xl text-sm font-semibold transition-colors ${
+                tab === "probationAL"
+                  ? "bg-indigo-600 text-white shadow-sm"
+                  : "bg-white text-gray-600 border border-gray-200 hover:border-indigo-300"
+              }`}
+            >
+              Probation AL Access
+            </button>
+          )}
         </div>
 
         {/* Filters */}
+        {tab !== "calendar" && tab !== "roles" && tab !== "probationAL" && (
         <div className="flex flex-wrap gap-3 mb-4">
           <input
             type="text"
@@ -490,6 +525,7 @@ export default function AdminDashboard() {
             </div>
           )}
         </div>
+        )}
 
         {tab === "requests" && (
           <p className="text-sm text-gray-500 mb-4">
@@ -498,6 +534,12 @@ export default function AdminDashboard() {
             {filterLeaveType !== "all" &&
               ` under ${TYPE_LABELS[filterLeaveType]}`}
           </p>
+        )}
+
+        {tab === "calendar" && <CompanyCalendarManager />}
+        {tab === "roles" && user?.role === "admin" && <RoleAssigner />}
+        {tab === "probationAL" && user?.role === "admin" && (
+          <ProbationAnnualLeaveAccess />
         )}
 
         {/* Balances table */}

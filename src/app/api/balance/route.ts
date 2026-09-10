@@ -10,6 +10,7 @@ import {
 import {
   calculateBalance,
   getAvailableLeaveTypes,
+  isOnProbation,
 } from "@/lib/leave-calculator";
 
 export async function GET() {
@@ -45,6 +46,7 @@ export async function GET() {
         designation: employee.designation,
         department: employee.department,
         employeeType: employee.employeeType,
+        onProbation: isOnProbation(employee, new Date()),
       },
     });
   } catch (err) {

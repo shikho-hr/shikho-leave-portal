@@ -25,6 +25,7 @@ interface BalanceData {
     designation: string;
     department: string;
     employeeType: EmployeeType;
+    onProbation: boolean;
   };
 }
 
@@ -249,6 +250,7 @@ export default function Dashboard() {
             </h1>
             <p className="text-sm text-gray-500 mt-1">
               {employee.designation} &middot; {employee.department}
+              {employee.onProbation && <> &middot; On Probation</>}
             </p>
           </div>
           <button

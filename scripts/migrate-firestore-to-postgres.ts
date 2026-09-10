@@ -34,7 +34,7 @@ import { adminDb } from "../src/lib/firebase-admin";
 import { prisma } from "../src/lib/prisma";
 import {
   upsertEmployeesFromSheet,
-  upsertHolidaysFromSheet,
+  createHoliday,
   upsertOpeningBalancesFromSheet,
   upsertBalanceSnapshots,
 } from "../src/lib/db";
@@ -85,7 +85,11 @@ async function migrateEmployees() {
 async function migrateHolidays() {
   const snap = await adminDb.collection("holidays").get();
   const holidays = snap.docs.map((d) => d.data() as Holiday);
-  await upsertHolidaysFromSheet(holidays);
+  // Holidays are admin-managed directly now (not sheet-synced), but this
+  // migration is a one-time historical import, not an ongoing sync — write
+  // whatever pre-existing holidays Firestore has via the same admin CRUD
+  // function the app itself now uses.
+  await Promise.all(holidays.map((h) => createHoliday(h.date, h.name)));
   console.log(`Holidays: migrated ${holidays.length}`);
   return { firestoreCount: holidays.length, migratedCount: holidays.length };
 }

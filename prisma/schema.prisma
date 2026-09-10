@@ -21,6 +21,10 @@ model Employee {
   fullTimeEffectiveDate DateTime? @db.Date
   gender                String?
   contractType          String
+  // Admin-granted exception letting this specific employee select Annual
+  // Leave while still on probation (normally blocked entirely) - never
+  // sheet-synced, see upsertEmployeesFromSheet in db.ts.
+  probationAnnualLeaveApproved Boolean @default(false)
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
 
@@ -97,6 +101,14 @@ model InternalNote {
 model Holiday {
   date DateTime @id @db.Date
   name String
+}
+
+// A Friday/Saturday (the normal company weekend) that's a working day for a
+// specific date - e.g. a team came in to make up for a holiday landing
+// mid-week. Just a date list, mirroring Holiday but inverted: presence here
+// overrides the default weekend exclusion in leave-calculator.ts.
+model WorkingWeekend {
+  date DateTime @id @db.Date
 }
 
 model OpeningBalance {

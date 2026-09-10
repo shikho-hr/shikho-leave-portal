@@ -2,40 +2,31 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import {
   fetchEmployeesFromSheet,
-  fetchHolidaysFromSheet,
   fetchOpeningBalancesFromSheet,
 } from "@/lib/sheets-sync";
-import {
-  upsertEmployeesFromSheet,
-  upsertHolidaysFromSheet,
-  upsertOpeningBalancesFromSheet,
-} from "@/lib/db";
+import { upsertEmployeesFromSheet, upsertOpeningBalancesFromSheet } from "@/lib/db";
 
+// Holidays and working weekends are managed directly in the app (Team
+// Details' "Company Calendar" tab), not synced from the Sheet — see
+// src/app/api/admin/holidays/route.ts and .../working-weekends/route.ts.
+// Keeping them out of this sync avoids ever having two sources of truth
+// for the same list.
 async function runSync() {
-  const [employeeResult, holidayResult, balanceResult] = await Promise.all([
+  const [employeeResult, balanceResult] = await Promise.all([
     fetchEmployeesFromSheet(),
-    fetchHolidaysFromSheet(),
     fetchOpeningBalancesFromSheet(),
   ]);
 
   // Opening balances reference employees by email (foreign key in
   // Postgres, unlike Firestore) — employees must be written first, so this
-  // can no longer run as a single Promise.all like the other two.
+  // can no longer run as a single Promise.all.
   await upsertEmployeesFromSheet(employeeResult.employees);
-  await Promise.all([
-    upsertHolidaysFromSheet(holidayResult.holidays),
-    upsertOpeningBalancesFromSheet(balanceResult.balances),
-  ]);
+  await upsertOpeningBalancesFromSheet(balanceResult.balances);
 
   return NextResponse.json({
     employeesSynced: employeeResult.employees.length,
-    holidaysSynced: holidayResult.holidays.length,
     openingBalancesSynced: balanceResult.balances.length,
-    errors: [
-      ...employeeResult.errors,
-      ...holidayResult.errors,
-      ...balanceResult.errors,
-    ],
+    errors: [...employeeResult.errors, ...balanceResult.errors],
   });
 }
 

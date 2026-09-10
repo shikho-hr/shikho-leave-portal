@@ -45,6 +45,7 @@ export default function ApplyLeave() {
   const router = useRouter();
   const [availableTypes, setAvailableTypes] = useState<string[]>([]);
   const [holidayDates, setHolidayDates] = useState<string[]>([]);
+  const [workingWeekendDates, setWorkingWeekendDates] = useState<string[]>([]);
   const [form, setForm] = useState({
     leaveType: "",
     startDate: "",
@@ -78,6 +79,7 @@ export default function ApplyLeave() {
       ]).then(([balanceData, holidayData]) => {
         setAvailableTypes(balanceData.availableTypes || []);
         setHolidayDates(holidayData.dates || []);
+        setWorkingWeekendDates(holidayData.workingWeekendDates || []);
       });
     }
   }, [user]);
@@ -96,7 +98,8 @@ export default function ApplyLeave() {
           form.startDate,
           effectiveEndDate,
           form.halfDayPeriod || undefined,
-          holidayDates
+          holidayDates,
+          workingWeekendDates
         )
       : 0;
 

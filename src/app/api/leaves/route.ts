@@ -13,6 +13,7 @@ import {
   getLeavesVisibleToHR,
   addComment,
   getHolidays,
+  getWorkingWeekends,
   getOpeningBalance,
   getBalanceSnapshot,
 } from "@/lib/db";
@@ -125,13 +126,19 @@ export async function POST(req: NextRequest) {
       );
 
     // Days are always computed server-side from the dates — never trust a
-    // client-submitted number — excluding the weekend and holidays.
-    const holidays = await getHolidays();
+    // client-submitted number — excluding the weekend and holidays, unless
+    // the specific date is a working-weekend override.
+    const [holidays, workingWeekends] = await Promise.all([
+      getHolidays(),
+      getWorkingWeekends(),
+    ]);
+    const holidayDates = holidays.map((h) => h.date);
     const days = calculateLeaveDays(
       startDate,
       endDate,
       halfDayPeriod,
-      holidays.map((h) => h.date)
+      holidayDates,
+      workingWeekends
     );
 
     // Validate balance — per year, since a backdated request applied for
@@ -142,7 +149,8 @@ export async function POST(req: NextRequest) {
       startDate,
       endDate,
       halfDayPeriod,
-      holidays.map((h) => h.date)
+      holidayDates,
+      workingWeekends
     );
     const startYear = parseISO(startDate).getFullYear();
 

@@ -58,6 +58,7 @@ function rowToEmployee(row: {
   fullTimeEffectiveDate: Date | null;
   gender: string | null;
   contractType: string;
+  probationAnnualLeaveApproved: boolean;
 }): Employee {
   return {
     id: row.id,
@@ -76,6 +77,7 @@ function rowToEmployee(row: {
       : "",
     gender: (row.gender ?? "") as Gender,
     contractType: row.contractType as ContractType,
+    probationAnnualLeaveApproved: row.probationAnnualLeaveApproved,
   };
 }
 
@@ -322,6 +324,12 @@ export async function getEmployeesByManager(
 // managerEmail is filled in on a second pass once every row exists — the
 // self-referencing manager FK would otherwise fail depending on manager-vs-
 // reportee ordering in the sheet.
+//
+// Role is deliberately NOT in the shared update fields — it's admin-managed
+// directly in the app (Team Details' "Role Assigner" tab), never sheet-
+// synced, same reasoning as holidays/working weekends. A genuinely new
+// employee still defaults to "employee" (set only on create); an existing
+// one's role is never touched by a re-sync, no matter what the sheet says.
 export async function upsertEmployeesFromSheet(
   employees: Employee[]
 ): Promise<void> {
@@ -336,7 +344,6 @@ export async function upsertEmployeesFromSheet(
           department: emp.department,
           employeeType: emp.employeeType,
           probationEndDate: strToDate(emp.probationEndDate),
-          role: emp.role,
           status: emp.status,
           fullTimeEffectiveDate: strToDate(emp.fullTimeEffectiveDate),
           gender: emp.gender || null,
@@ -344,7 +351,7 @@ export async function upsertEmployeesFromSheet(
         };
         return prisma.employee.upsert({
           where: { email },
-          create: { email, id: email, ...shared },
+          create: { email, id: email, role: "employee", ...shared },
           update: shared,
         });
       })
@@ -362,6 +369,48 @@ export async function upsertEmployeesFromSheet(
       )
     );
   }
+}
+
+// Admin-only role change (Team Details' "Role Assigner" tab) — the only
+// place an employee's role is ever set after their initial "employee"
+// default, per upsertEmployeesFromSheet's comment above.
+export async function updateEmployeeRole(
+  email: string,
+  role: Role
+): Promise<void> {
+  await prisma.employee.update({
+    where: { email: email.toLowerCase() },
+    data: { role },
+  });
+}
+
+// Admin-only grant/revoke for the Annual-Leave-during-probation exception
+// (Team Details' "Probation AL Access" tab).
+export async function setProbationAnnualLeaveApproval(
+  email: string,
+  approved: boolean
+): Promise<void> {
+  await prisma.employee.update({
+    where: { email: email.toLowerCase() },
+    data: { probationAnnualLeaveApproved: approved },
+  });
+}
+
+// Everyone currently granted the exception AND still on probation — the
+// list naturally shrinks with no extra cleanup once someone's probation
+// ends, since they simply stop matching this filter (see the tab's own
+// comment for why the stale `true` left on their row afterward is
+// harmless).
+export async function getProbationAnnualLeaveApprovedEmployees(): Promise<
+  Employee[]
+> {
+  const rows = await prisma.employee.findMany({
+    where: {
+      probationAnnualLeaveApproved: true,
+      probationEndDate: { gt: new Date() },
+    },
+  });
+  return rows.map(rowToEmployee);
 }
 
 // ── Holidays ───────────────────────────────────────────────────
@@ -384,22 +433,38 @@ export async function getHolidaysByDates(
   return new Set(rows.map((r) => dateToStr(r.date)));
 }
 
-// Upsert holidays pulled from the Google Sheet roster (re-syncing the same
-// date naturally dedupes, since date is the primary key).
-export async function upsertHolidaysFromSheet(
-  holidays: Holiday[]
-): Promise<void> {
-  for (const batch of chunk(holidays, 200)) {
-    await Promise.all(
-      batch.map((holiday) =>
-        prisma.holiday.upsert({
-          where: { date: strToDateRequired(holiday.date) },
-          create: { date: strToDateRequired(holiday.date), name: holiday.name },
-          update: { name: holiday.name },
-        })
-      )
-    );
-  }
+// Admin-managed directly in the app (Team Details' "Company Calendar" tab)
+// - not sheet-synced, so there's only ever one source of truth for it.
+export async function createHoliday(date: string, name: string): Promise<void> {
+  await prisma.holiday.upsert({
+    where: { date: strToDateRequired(date) },
+    create: { date: strToDateRequired(date), name },
+    update: { name },
+  });
+}
+
+export async function deleteHoliday(date: string): Promise<void> {
+  await prisma.holiday.delete({ where: { date: strToDateRequired(date) } });
+}
+
+// ── Working weekends (a Friday/Saturday that's a working day) ───
+
+export async function getWorkingWeekends(): Promise<string[]> {
+  const rows = await prisma.workingWeekend.findMany();
+  return rows.map((r) => dateToStr(r.date));
+}
+
+// Also admin-managed directly, same reasoning as createHoliday/deleteHoliday.
+export async function createWorkingWeekend(date: string): Promise<void> {
+  await prisma.workingWeekend.upsert({
+    where: { date: strToDateRequired(date) },
+    create: { date: strToDateRequired(date) },
+    update: {},
+  });
+}
+
+export async function deleteWorkingWeekend(date: string): Promise<void> {
+  await prisma.workingWeekend.delete({ where: { date: strToDateRequired(date) } });
 }
 
 // ── Opening / carry-forward balances ────────────────────────────
