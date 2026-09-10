@@ -87,6 +87,19 @@ const blockDatePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
   e.preventDefault();
 };
 
+// Used for the Employee Balances tab's "Last updated" label next to the
+// admin-only Refresh button.
+function formatRelativeTime(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const minutes = Math.round(diffMs / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min${minutes === 1 ? "" : "s"} ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.round(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
+
 export default function AdminDashboard() {
   const { user, status } = useAuth();
   const router = useRouter();
@@ -117,6 +130,13 @@ export default function AdminDashboard() {
   } | null>(null);
   const [changingTypeId, setChangingTypeId] = useState<string | null>(null);
   const [typeChangeError, setTypeChangeError] = useState("");
+  // Admin only — when the employees fetch served balances from the cache
+  // (see /api/employees' X-Cache-Computed-At header), this is when that
+  // cache was last computed. Null for managers, who always get live data.
+  const [balancesUpdatedAt, setBalancesUpdatedAt] = useState<string | null>(
+    null
+  );
+  const [refreshingBalances, setRefreshingBalances] = useState(false);
 
   useEffect(() => {
     if (status === "unauthenticated") router.replace("/");
@@ -126,12 +146,14 @@ export default function AdminDashboard() {
   }, [status, user, router]);
 
   const fetchAdminData = () => {
-    Promise.all([
-      fetch("/api/employees").then((r) => r.json()),
+    return Promise.all([
+      fetch("/api/employees"),
       fetch("/api/leaves?view=all").then((r) => r.json()),
-    ]).then(([emps, lvs]) => {
+    ]).then(async ([empsRes, lvs]) => {
+      const emps = await empsRes.json();
       setEmployees(Array.isArray(emps) ? emps : []);
       setAllLeaves(Array.isArray(lvs) ? lvs : []);
+      setBalancesUpdatedAt(empsRes.headers.get("X-Cache-Computed-At"));
       setLoading(false);
     });
   };
@@ -214,6 +236,21 @@ export default function AdminDashboard() {
       setBackupResult({ error: "Network error during backup" });
     } finally {
       setBackingUp(false);
+    }
+  };
+
+  const handleRefreshBalances = async () => {
+    setRefreshingBalances(true);
+    try {
+      const res = await fetch("/api/admin/employee-balances-cache", {
+        method: "POST",
+      });
+      if (res.ok) await fetchAdminData();
+    } catch {
+      // Refresh failed silently — the existing cached balances stay
+      // displayed and the user can just click Refresh again.
+    } finally {
+      setRefreshingBalances(false);
     }
   };
 
@@ -438,6 +475,24 @@ export default function AdminDashboard() {
             </button>
           )}
         </div>
+
+        {/* Balance cache status — admin only, and only balances are cached */}
+        {user?.role === "admin" && tab === "balances" && (
+          <div className="flex items-center gap-3 mb-4 text-sm">
+            <button
+              onClick={handleRefreshBalances}
+              disabled={refreshingBalances}
+              className="bg-white border border-gray-200 text-gray-700 font-semibold px-4 py-2 rounded-xl hover:border-indigo-300 disabled:opacity-50 transition-colors shadow-sm"
+            >
+              {refreshingBalances ? "Refreshing..." : "Refresh Balances"}
+            </button>
+            {balancesUpdatedAt && (
+              <span className="text-gray-500">
+                Last updated {formatRelativeTime(balancesUpdatedAt)}
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Filters */}
         {tab !== "calendar" && tab !== "roles" && tab !== "probationAL" && (

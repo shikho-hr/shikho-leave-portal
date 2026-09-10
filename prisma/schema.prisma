@@ -145,6 +145,18 @@ model BalanceSnapshot {
   employee Employee @relation(fields: [email], references: [email])
 }
 
+// Singleton row (id is always "admin") caching the admin Team Details
+// balances table's expensive per-employee computation - see
+// computeAllEmployeeBalances()/refreshEmployeeBalanceCache() in db.ts.
+// Refreshed nightly by a Vercel Cron and on-demand via the Admin page's
+// Refresh button; never touched for the employee/manager views, which stay
+// live.
+model EmployeeBalanceCache {
+  id         String   @id @default("admin")
+  data       Json
+  computedAt DateTime @default(now())
+}
+
 model Notification {
   id                String   @id
   recipientEmail    String

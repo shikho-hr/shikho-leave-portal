@@ -1,4 +1,5 @@
 import { prisma } from "./prisma";
+import type { Prisma } from "@prisma/client";
 import {
   Employee,
   EmployeeType,
@@ -13,6 +14,7 @@ import {
   OpeningBalance,
   BalanceSnapshot,
   Notification,
+  LeaveBalance,
 } from "./types";
 import {
   generateLeaveId,
@@ -20,7 +22,11 @@ import {
   generateNoteId,
   generateNotificationId,
 } from "./ids";
-import { LEAVE_TYPE_LABELS, formatDateRange } from "./leave-calculator";
+import {
+  LEAVE_TYPE_LABELS,
+  formatDateRange,
+  calculateBalance,
+} from "./leave-calculator";
 import { sendMail } from "./mailer";
 
 // ── Date/decimal <-> plain-object conversion helpers ────────────
@@ -751,6 +757,70 @@ export async function getAllApprovedLeavesGroupedByEmployee(): Promise<
   return grouped;
 }
 
+// ── Admin balance cache ──────────────────────────────────────────
+// The admin Team Details balances table is the only view that needs every
+// employee's balance computed at once (managers get a cheap, reportee-
+// scoped version via getApprovedLeavesGroupedByEmployees instead). This is
+// still a real full-company scan + per-employee calculateBalance() call, so
+// its result is cached (see EmployeeBalanceCache in schema.prisma) instead
+// of recomputed on every admin page load. The employee list itself is never
+// cached — only this balance map.
+
+// Same computation the admin branch of /api/employees used to do inline —
+// extracted so it can be called both by the nightly cron/manual-refresh
+// route and, as a cold-start fallback, by /api/employees itself.
+export async function computeAllEmployeeBalances(): Promise<
+  Record<string, LeaveBalance>
+> {
+  const employees = await getEmployees();
+  const [approvedByEmail, openingBalances, snapshots] = await Promise.all([
+    getAllApprovedLeavesGroupedByEmployee(),
+    getAllOpeningBalances(),
+    getAllBalanceSnapshots(),
+  ]);
+
+  const result: Record<string, LeaveBalance> = {};
+  for (const emp of employees) {
+    const approved = approvedByEmail.get(emp.email) || [];
+    const balance = calculateBalance(
+      emp,
+      approved,
+      openingBalances.get(emp.email),
+      snapshots.get(emp.email)
+    );
+    result[emp.email] = balance.remaining;
+  }
+  return result;
+}
+
+export async function refreshEmployeeBalanceCache(): Promise<{
+  data: Record<string, LeaveBalance>;
+  computedAt: Date;
+}> {
+  const data = await computeAllEmployeeBalances();
+  const jsonData = data as unknown as Prisma.InputJsonValue;
+  const row = await prisma.employeeBalanceCache.upsert({
+    where: { id: "admin" },
+    create: { id: "admin", data: jsonData },
+    update: { data: jsonData, computedAt: new Date() },
+  });
+  return { data, computedAt: row.computedAt };
+}
+
+export async function getCachedEmployeeBalances(): Promise<{
+  data: Record<string, LeaveBalance>;
+  computedAt: Date;
+} | null> {
+  const row = await prisma.employeeBalanceCache.findUnique({
+    where: { id: "admin" },
+  });
+  if (!row) return null;
+  return {
+    data: row.data as unknown as Record<string, LeaveBalance>,
+    computedAt: row.computedAt,
+  };
+}
+
 // Approved leaves whose date range overlaps [rangeStart, rangeEnd] — used
 // by the analytics weekday chart.
 export async function getApprovedLeavesOverlapping(
@@ -894,8 +964,21 @@ async function notifyRecipients(
   const dateRange = formatDateRange(leave.startDate, leave.endDate);
   const link = `${process.env.APP_BASE_URL || ""}/dashboard`;
 
-  const text = `${authorName} ${verbPhrase} ${leave.employeeName}'s ${typeLabel} request (${dateRange}, ${leave.days} day(s)).\n\n"${commentText}"\n\nView in the Leave Portal: ${link}`;
-  const html = `<p><strong>${authorName}</strong> ${verbPhrase} <strong>${leave.employeeName}'s ${typeLabel}</strong> request (${dateRange}, ${leave.days} day(s)).</p><p>${commentText}</p><p><a href="${link}">View in the Leave Portal</a></p>`;
+  // Sick leave has no in-app document upload — the employee is asked to
+  // reply into this same email thread with the medical document attached
+  // instead, so it reaches the manager and HR (both already recipients
+  // here) without any new storage/upload infra.
+  const attachmentAsk =
+    isSubmission && leave.leaveType === "sick"
+      ? "\n\nIf you have a medical document for this leave, please reply to this email with it attached — your manager and HR will see it in this thread."
+      : "";
+  const attachmentAskHtml =
+    isSubmission && leave.leaveType === "sick"
+      ? "<p>If you have a medical document for this leave, please reply to this email with it attached — your manager and HR will see it in this thread.</p>"
+      : "";
+
+  const text = `${authorName} ${verbPhrase} ${leave.employeeName}'s ${typeLabel} request (${dateRange}, ${leave.days} day(s)).\n\n"${commentText}"${attachmentAsk}\n\nView in the Leave Portal: ${link}`;
+  const html = `<p><strong>${authorName}</strong> ${verbPhrase} <strong>${leave.employeeName}'s ${typeLabel}</strong> request (${dateRange}, ${leave.days} day(s)).</p><p>${commentText}</p>${attachmentAskHtml}<p><a href="${link}">View in the Leave Portal</a></p>`;
 
   // Every email about this leave shares one root Message-ID so mail clients
   // thread them into a single conversation. The submission email originates

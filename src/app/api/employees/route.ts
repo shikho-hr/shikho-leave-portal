@@ -3,10 +3,11 @@ import { getCurrentUser } from "@/lib/auth";
 import {
   getEmployees,
   getEmployeesByManager,
-  getAllApprovedLeavesGroupedByEmployee,
   getApprovedLeavesGroupedByEmployees,
   getAllOpeningBalances,
   getAllBalanceSnapshots,
+  getCachedEmployeeBalances,
+  refreshEmployeeBalanceCache,
 } from "@/lib/db";
 import { calculateBalance } from "@/lib/leave-calculator";
 
@@ -20,19 +21,34 @@ export async function GET() {
   }
 
   try {
-    const isAdmin = user.role === "admin";
-    // Managers only see their active reportees — Admin still sees everyone,
-    // active or inactive, unchanged.
-    const employees = isAdmin
-      ? await getEmployees()
-      : (await getEmployeesByManager(user.email)).filter(
-          (e) => e.status === "active"
-        );
+    if (user.role === "admin") {
+      // Admin's full-company balance computation is the expensive part
+      // (full leaves scan + per-employee calculateBalance) — served from
+      // the nightly/manually-refreshed cache. The employee list itself
+      // stays live on every request, same as before.
+      const employees = await getEmployees();
+      let cache = await getCachedEmployeeBalances();
+      if (!cache) {
+        // Cold start (e.g. right after deploy, before the first nightly
+        // run) — compute once and populate the cache so subsequent
+        // requests are fast without waiting for the cron.
+        cache = await refreshEmployeeBalanceCache();
+      }
+      const enriched = employees.map((emp) => ({
+        ...emp,
+        balance: cache!.data[emp.email],
+      }));
+      return NextResponse.json(enriched, {
+        headers: { "X-Cache-Computed-At": cache.computedAt.toISOString() },
+      });
+    }
 
+    // Manager: always live — reportee-scoped and already cheap.
+    const employees = (await getEmployeesByManager(user.email)).filter(
+      (e) => e.status === "active"
+    );
     const [approvedByEmail, openingBalances, snapshots] = await Promise.all([
-      isAdmin
-        ? getAllApprovedLeavesGroupedByEmployee()
-        : getApprovedLeavesGroupedByEmployees(employees.map((e) => e.email)),
+      getApprovedLeavesGroupedByEmployees(employees.map((e) => e.email)),
       getAllOpeningBalances(),
       getAllBalanceSnapshots(),
     ]);
