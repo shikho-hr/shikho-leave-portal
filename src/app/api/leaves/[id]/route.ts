@@ -182,7 +182,8 @@ export async function PATCH(
       user.name || user.email,
       autoComment,
       false,
-      newStatus === "manager_approved" || newStatus === "approved"
+      newStatus === "manager_approved" || newStatus === "approved",
+      newStatus === "rejected"
     );
 
     return NextResponse.json({

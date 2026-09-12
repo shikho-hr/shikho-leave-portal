@@ -855,7 +855,8 @@ export async function addComment(
   authorName: string,
   comment: string,
   isSubmission = false,
-  suppressEmail = false
+  suppressEmail = false,
+  isRejection = false
 ): Promise<LeaveComment> {
   const id = generateCommentId();
   const createdAt = new Date();
@@ -877,7 +878,8 @@ export async function addComment(
     comment,
     false,
     isSubmission,
-    suppressEmail
+    suppressEmail,
+    isRejection
   );
   return data;
 }
@@ -905,7 +907,8 @@ async function notifyRecipients(
   commentText: string,
   isInternalNote: boolean,
   isSubmission = false,
-  suppressEmail = false
+  suppressEmail = false,
+  isRejection = false
 ): Promise<void> {
   const leave = await getLeaveById(leaveId);
   if (!leave) return;
@@ -926,68 +929,104 @@ async function notifyRecipients(
     where: { role: "admin" },
     select: { email: true },
   });
-  admins.forEach((a) => recipients.add(a.email.toLowerCase()));
+  const adminEmails = new Set(admins.map((a) => a.email.toLowerCase()));
+  adminEmails.forEach((email) => recipients.add(email));
+
+  // The full recipient set (employee unless internal note + manager + HR)
+  // is captured here, before the author is excluded below, for the email
+  // — per the business rule, the actor still gets a copy of the email
+  // (e.g. the employee who submits still gets the submission email, the
+  // manager who rejects still gets the rejection email). The in-app bell
+  // notification below is a separate concern and keeps excluding the
+  // actor — nobody needs a bell alert for their own action.
+  const emailRecipientSet = new Set(recipients);
 
   recipients.delete(authorEmail.toLowerCase());
-  if (recipients.size === 0) return;
+  if (recipients.size === 0 && emailRecipientSet.size === 0) return;
 
-  const createdAt = new Date();
-  await prisma.notification.createMany({
-    data: Array.from(recipients).map((recipientEmail) => ({
-      id: generateNotificationId(),
-      recipientEmail,
-      leaveId,
-      leaveType: leave.leaveType,
-      employeeName: leave.employeeName,
-      commentAuthorName: authorName,
-      commentPreview: commentText.slice(0, 140),
-      isInternalNote,
-      isSubmission,
-      read: false,
-      createdAt,
-    })),
-  });
+  if (recipients.size > 0) {
+    const createdAt = new Date();
+    await prisma.notification.createMany({
+      data: Array.from(recipients).map((recipientEmail) => ({
+        id: generateNotificationId(),
+        recipientEmail,
+        leaveId,
+        leaveType: leave.leaveType,
+        employeeName: leave.employeeName,
+        commentAuthorName: authorName,
+        commentPreview: commentText.slice(0, 140),
+        isInternalNote,
+        isSubmission,
+        read: false,
+        createdAt,
+      })),
+    });
+  }
 
   if (suppressEmail) return;
 
   const typeLabel = LEAVE_TYPE_LABELS[leave.leaveType] || leave.leaveType;
-  const subjectPrefix = isSubmission
-    ? "New leave request"
-    : isInternalNote
-    ? "Internal note"
-    : "New comment";
-  const verbPhrase = isSubmission
-    ? "submitted a new request for"
-    : isInternalNote
-    ? "added an internal note on"
-    : "commented on";
   const dateRange = formatDateRange(leave.startDate, leave.endDate);
   const link = `${process.env.APP_BASE_URL || ""}/dashboard`;
+  const viewLine = `View in the Leave Portal: ${link}`;
+  const viewLineHtml = `<p><a href="${link}">View in the Leave Portal</a></p>`;
 
-  // Sick leave has no in-app document upload — the employee is asked to
-  // reply into this same email thread with the medical document attached
-  // instead, so it reaches the manager and HR (both already recipients
-  // here) without any new storage/upload infra.
-  const attachmentAsk =
-    isSubmission && leave.leaveType === "sick"
-      ? "\n\nIf you have a medical document for this leave, please reply to this email with it attached — your manager and HR will see it in this thread."
-      : "";
-  const attachmentAskHtml =
-    isSubmission && leave.leaveType === "sick"
-      ? "<p>If you have a medical document for this leave, please reply to this email with it attached — your manager and HR will see it in this thread.</p>"
-      : "";
+  // Every notification uses the same subject so mail clients group them as
+  // one conversation alongside the Message-ID threading below.
+  const subject = `[Leave] ${leave.employeeName}`;
+  const rejectedByLabel =
+    leave.rejectedByRole === "admin" ? "HR" : "the Manager";
 
-  const text = `${authorName} ${verbPhrase} ${leave.employeeName}'s ${typeLabel} request (${dateRange}, ${leave.days} day(s)).\n\n"${commentText}"${attachmentAsk}\n\nView in the Leave Portal: ${link}`;
-  const html = `<p><strong>${authorName}</strong> ${verbPhrase} <strong>${leave.employeeName}'s ${typeLabel}</strong> request (${dateRange}, ${leave.days} day(s)).</p><p>${commentText}</p>${attachmentAskHtml}<p><a href="${link}">View in the Leave Portal</a></p>`;
+  let text: string;
+  let html: string;
+  if (isSubmission) {
+    text = `${leave.employeeName} has submitted a new ${typeLabel} application for ${dateRange} - ${leave.days} day(s).\nReason: ${commentText}\n\n${viewLine}`;
+    html = `<p>${leave.employeeName} has submitted a new ${typeLabel} application for ${dateRange} - ${leave.days} day(s).</p><p>Reason: ${commentText}</p>${viewLineHtml}`;
+  } else if (isRejection) {
+    text = `This ${typeLabel} application from ${leave.employeeName} (${dateRange}) has been rejected by ${rejectedByLabel}.\nComment: ${leave.reviewerComments}\n\n${viewLine}`;
+    html = `<p>This ${typeLabel} application from ${leave.employeeName} (${dateRange}) has been rejected by ${rejectedByLabel}.</p><p>Comment: ${leave.reviewerComments}</p>${viewLineHtml}`;
+  } else if (isInternalNote) {
+    // Deliberately generic "Manager/HR" rather than the actual author's
+    // name — internal notes are meant to read as a note from the
+    // reviewing side in general, not attributed to one specific person.
+    text = `Manager/HR has added an internal note on ${leave.employeeName}'s ${typeLabel} application (${dateRange}).\n"${commentText}"\n\n${viewLine}`;
+    html = `<p>Manager/HR has added an internal note on ${leave.employeeName}'s ${typeLabel} application (${dateRange}).</p><p>"${commentText}"</p>${viewLineHtml}`;
+  } else {
+    text = `${authorName} has added a comment on ${leave.employeeName}'s ${typeLabel} application (${dateRange}).\n"${commentText}"\n\n${viewLine}`;
+    html = `<p>${authorName} has added a comment on ${leave.employeeName}'s ${typeLabel} application (${dateRange}).</p><p>"${commentText}"</p>${viewLineHtml}`;
+  }
 
   // Every email about this leave shares one root Message-ID so mail clients
   // thread them into a single conversation. The submission email originates
   // the thread; everything after it replies into that root.
   const rootMessageId = `<leave-${leaveId}@shikho.com>`;
 
+  // Test-only escape hatch: when previewing email formatting/rendering
+  // locally, skip CC'ing real HR/admin inboxes — in-app notifications
+  // above are unaffected, this only trims who the email itself goes to.
+  // Must stay off (unset) anywhere real, since HR being CC'd is the actual
+  // business rule — see project_leave_email_notifications memory.
+  //
+  // Only strips admins who are HR-only here — an admin who happens to also
+  // be the applicant or the manager on this specific leave (e.g. testing
+  // with an admin-role account) still gets the email as themselves, not as
+  // "HR"; otherwise that person could end up with zero recipients at all.
+  const managerEmail = employee?.managerEmail?.toLowerCase();
+  const hrOnlyEmails = new Set(
+    Array.from(adminEmails).filter(
+      (email) =>
+        email !== leave.employeeEmail.toLowerCase() && email !== managerEmail
+    )
+  );
+  const emailRecipients =
+    process.env.LEAVE_EMAILS_SKIP_HR_FOR_TESTING === "true"
+      ? Array.from(emailRecipientSet).filter((email) => !hrOnlyEmails.has(email))
+      : Array.from(emailRecipientSet);
+  if (emailRecipients.length === 0) return;
+
   await sendMail({
-    to: Array.from(recipients),
-    subject: `${subjectPrefix} — ${leave.employeeName}'s ${typeLabel}`,
+    to: emailRecipients,
+    subject,
     text,
     html,
     ...(isSubmission
