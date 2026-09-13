@@ -141,7 +141,8 @@ export async function fetchEmployeesFromSheet(): Promise<EmployeeSyncResult> {
 
     const employeeType = get(row, "employeeType").toLowerCase() as EmployeeType;
     const status = get(row, "status").toLowerCase();
-    const gender = get(row, "gender").toLowerCase() as Gender;
+    const genderRaw = get(row, "gender").toLowerCase();
+    const gender = (genderRaw === "m" ? "male" : genderRaw === "f" ? "female" : genderRaw) as Gender;
 
     if (!EMPLOYEE_TYPES.includes(employeeType)) {
       errors.push(
