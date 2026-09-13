@@ -1,8 +1,12 @@
 import { initializeApp, getApps, cert, App } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
-import { getFirestore } from "firebase-admin/firestore";
 
-function getAdminApp(): App {
+// Exported (not just adminAuth) so one-off scripts that need Firestore
+// directly - e.g. scripts/migrate-firestore-to-postgres.ts, re-run right
+// before the production cutover - can build their own client via
+// getFirestore(getAdminApp()) without this module exporting an adminDb
+// that the live app itself no longer uses (it's fully on Postgres).
+export function getAdminApp(): App {
   if (getApps().length) return getApps()[0];
 
   return initializeApp({
@@ -17,4 +21,3 @@ function getAdminApp(): App {
 const adminApp = getAdminApp();
 
 export const adminAuth = getAuth(adminApp);
-export const adminDb = getFirestore(adminApp);

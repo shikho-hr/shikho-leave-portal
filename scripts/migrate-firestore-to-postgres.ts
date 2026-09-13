@@ -30,8 +30,11 @@
 // rather than a dotenv import here — firebase-admin.ts reads
 // process.env.* at module-load time, and static imports are hoisted above
 // any config()-style call in this file, so it would run too late.
-import { adminDb } from "../src/lib/firebase-admin";
+import { getFirestore } from "firebase-admin/firestore";
+import { getAdminApp } from "../src/lib/firebase-admin";
 import { prisma } from "../src/lib/prisma";
+
+const adminDb = getFirestore(getAdminApp());
 import {
   upsertEmployeesFromSheet,
   createHoliday,
