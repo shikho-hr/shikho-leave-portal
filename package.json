@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "prisma migrate deploy && next build",
+    "build": "node scripts/build.js",
     "start": "next start",
     "lint": "next lint",
     "migrate:firestore": "tsx --env-file=.env.local scripts/migrate-firestore-to-postgres.ts",
