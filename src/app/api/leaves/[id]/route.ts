@@ -5,8 +5,10 @@ import {
   getLeaveById,
   getEmployeeByEmail,
   addComment,
+  approveWithCompOffConsumption,
 } from "@/lib/db";
 import { isSingleStageApproval } from "@/lib/leave-calculator";
+import { isBalanceDrawn } from "@/lib/comp-off";
 
 export async function GET(
   req: NextRequest,
@@ -158,13 +160,37 @@ export async function PATCH(
       newStatus = "rejected";
     }
 
-    await updateLeaveStatus(
-      params.id,
-      newStatus,
-      user.email,
-      comments || "",
-      newStatus === "rejected" ? (role as "manager" | "admin") : undefined
-    );
+    // A balance-drawn Compensatory Off spends banked credits the moment it
+    // is finally approved — oldest work date first. The consumption and the
+    // status change commit together, so a second approver racing this one
+    // can't spend the same credit twice; if the balance moved underneath us
+    // the whole thing rolls back and nothing is approved.
+    if (newStatus === "approved" && isBalanceDrawn(leave)) {
+      const ok = await approveWithCompOffConsumption(
+        params.id,
+        leave.employeeEmail,
+        leave.days,
+        user.email,
+        comments || ""
+      );
+      if (!ok) {
+        return NextResponse.json(
+          {
+            error:
+              "This employee no longer has enough Compensatory Off balance for this request — it may have been spent on another approval.",
+          },
+          { status: 409 }
+        );
+      }
+    } else {
+      await updateLeaveStatus(
+        params.id,
+        newStatus,
+        user.email,
+        comments || "",
+        newStatus === "rejected" ? (role as "manager" | "admin") : undefined
+      );
+    }
 
     // Auto-add a comment for the action
     const actionLabel =

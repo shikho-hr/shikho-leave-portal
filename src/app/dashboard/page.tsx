@@ -6,6 +6,7 @@ import { Fragment, useEffect, useState } from "react";
 import Navbar from "@/components/Navbar";
 import CommentThread from "@/components/CommentThread";
 import ReasonToggle from "@/components/ReasonToggle";
+import CompOffPopup from "@/components/CompOffPopup";
 import {
   formatDate,
   formatDateRange,
@@ -20,6 +21,12 @@ interface BalanceData {
     remaining: Record<string, number>;
   };
   availableTypes: string[];
+  compOff?: {
+    accepted: number;
+    consumed: number;
+    remaining: number;
+    pending: number;
+  };
   employee: {
     name: string;
     designation: string;
@@ -55,7 +62,7 @@ const TYPE_LABELS: Record<string, string> = {
   paternity: "Paternity Leave",
   ladies_wfh: "Monthly WFH (Ladies)",
   compassionate: "Compassionate",
-  compensatory: "Compensatory",
+  compensatory: "Compensatory Off",
   wfh: "Work from Home",
   unpaid: "Unpaid Leave",
   offsite_attendance: "Off-site Attendance",
@@ -154,6 +161,9 @@ const GENERAL_LEAVE_TYPES = ["annual", "casual", "sick"];
 // Compassionate/Ladies WFH/Marriage + Maternity on a second row for women,
 // and Compassionate/Marriage/Paternity with no second row for men.
 const SPECIAL_LEAVE_ORDER = [
+  // Compensatory Off first, then Compassionate, then Paternity (HR,
+  // 2026-09-14).
+  "compensatory",
   "compassionate",
   "ladies_wfh",
   "marriage",
@@ -220,6 +230,7 @@ export default function Dashboard() {
   const [balanceView, setBalanceView] = useState<"remaining" | "taken">(
     "remaining"
   );
+  const [showCompOff, setShowCompOff] = useState(false);
   const [historyType, setHistoryType] = useState("all");
   const [historyYear, setHistoryYear] = useState("lifetime");
 
@@ -250,7 +261,7 @@ export default function Dashboard() {
 
   if (!balanceData) return null;
 
-  const { balance, availableTypes, employee } = balanceData;
+  const { balance, availableTypes, employee, compOff } = balanceData;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -283,7 +294,6 @@ export default function Dashboard() {
           const excluded = [
             "wfh",
             "unpaid",
-            "compensatory",
             "offsite_attendance",
             "wfh_deployment",
           ];
@@ -319,7 +329,11 @@ export default function Dashboard() {
               key={type}
               className={`bg-white rounded-2xl border border-gray-100 border-l-4 ${
                 CARD_ACCENTS[i % CARD_ACCENTS.length]
-              } ${compact ? "w-48 h-28 p-4" : "p-5"} shadow-sm ${
+              } ${
+                compact
+                  ? `w-48 p-4 ${type === "compensatory" ? "h-36" : "h-28"}`
+                  : "p-5"
+              } shadow-sm ${
                 usedUpThisMonth ? "opacity-50" : ""
               }`}
             >
@@ -335,6 +349,19 @@ export default function Dashboard() {
                   ? balance.used[type] ?? 0
                   : balance.remaining[type] ?? 0}
               </p>
+              {/* Compensatory Off is the one balance an employee can add to
+                  themselves, so its card carries a way in. Always shown,
+                  including at zero, so a first additional work day can be
+                  recorded. */}
+              {type === "compensatory" && (
+                <button
+                  onClick={() => setShowCompOff(true)}
+                  className="mt-1 text-xs font-semibold text-indigo-600 hover:text-indigo-800"
+                >
+                  Details
+                  {compOff && compOff.pending > 0 ? ` (${compOff.pending} pending)` : ""}
+                </button>
+              )}
             </div>
             );
           };
@@ -701,6 +728,21 @@ export default function Dashboard() {
         </>
         )}
       </main>
+
+      {/* Rendered outside the card flex row so the backdrop covers the page. */}
+      {showCompOff && (
+        <CompOffPopup
+          onClose={() => setShowCompOff(false)}
+          // A newly recorded day is pending, not balance, but it changes the
+          // "(N pending)" hint on the card — so refresh the balance either way.
+          onChanged={() =>
+            fetch("/api/balance")
+              .then((r) => r.json())
+              .then(setBalanceData)
+              .catch(() => {})
+          }
+        />
+      )}
     </div>
   );
 }

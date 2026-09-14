@@ -6,6 +6,7 @@ import {
   getLeavesByEmployee,
   getOpeningBalance,
   getBalanceSnapshot,
+  getCompOffSummary,
 } from "@/lib/db";
 import {
   calculateBalance,
@@ -30,16 +31,24 @@ export async function GET() {
     const allLeaves = await getLeavesByEmployee(user.email);
     const openingBalance = await getOpeningBalance(user.email);
     const snapshot = await getBalanceSnapshot(user.email);
+    const compOff = await getCompOffSummary(user.email);
     const balance = calculateBalance(
       employee,
       approvedLeaves,
       openingBalance || undefined,
-      snapshot || undefined
+      snapshot || undefined,
+      undefined,
+      undefined,
+      compOff
     );
     const availableTypes = getAvailableLeaveTypes(employee, allLeaves);
 
     return NextResponse.json({
       balance,
+      // The Compensatory Off card and the apply form both need more than
+      // the single remaining number (pending credits, and whether to hide
+      // the additional-work-date inputs).
+      compOff,
       availableTypes,
       employee: {
         name: employee.name,

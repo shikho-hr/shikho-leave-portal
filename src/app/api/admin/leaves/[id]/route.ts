@@ -101,6 +101,20 @@ export async function PATCH(
         { status: 400 }
       );
     }
+    // Compensatory Off is the one type that carries state outside the Leave
+    // row — either a claimed additional work date, or consumed CompOffCredit
+    // rows once approved. Reclassifying would strand that state (a freed
+    // work date nothing releases, or spent credits backing a leave that is
+    // no longer comp-off), so it is blocked in both directions.
+    if (leaveType === "compensatory" || leave.leaveType === "compensatory") {
+      return NextResponse.json(
+        {
+          error:
+            "Compensatory Off can't be reclassified — reject this request and have the employee re-apply under the right type.",
+        },
+        { status: 400 }
+      );
+    }
 
     await updateLeaveType(params.id, leaveType);
 

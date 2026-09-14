@@ -34,6 +34,7 @@ model Employee {
   openingBalance  OpeningBalance?
   balanceSnapshot BalanceSnapshot?
   notifications   Notification[]
+  compOffCredits  CompOffCredit[]
 
   @@index([managerEmail])
   @@index([status])
@@ -160,7 +161,17 @@ model EmployeeBalanceCache {
 model Notification {
   id                String   @id
   recipientEmail    String
-  leaveId           String
+  // Null for notifications that aren't about a leave request at all - i.e.
+  // the Compensatory Off credit kinds below, which point at creditId
+  // instead. Every "comment" notification still carries a leaveId.
+  leaveId           String?
+  // "comment" (a comment, internal note or submission on a leave - the
+  // original and still the default), "comp_off_request" (an employee
+  // recorded an additional work day, sent to their manager + admins) or
+  // "comp_off_decision" (that request was accepted/rejected, sent back to
+  // the employee). See src/lib/comp-off.ts.
+  kind              String   @default("comment")
+  creditId          String?
   leaveType         String
   employeeName      String
   commentAuthorName String
@@ -170,8 +181,44 @@ model Notification {
   read              Boolean  @default(false)
   createdAt         DateTime @default(now())
 
-  recipient Employee @relation(fields: [recipientEmail], references: [email])
-  leave     Leave    @relation(fields: [leaveId], references: [id], onDelete: Cascade)
+  recipient Employee       @relation(fields: [recipientEmail], references: [email])
+  leave     Leave?         @relation(fields: [leaveId], references: [id], onDelete: Cascade)
+  credit    CompOffCredit? @relation(fields: [creditId], references: [id], onDelete: Cascade)
 
   @@index([recipientEmail, createdAt(sort: Desc)])
+}
+
+// One banked "additional work day" for Compensatory Off. An employee records
+// one (status "pending"), their manager or an HR admin accepts it
+// ("accepted") and it becomes spendable balance, or rejects it ("rejected")
+// and nothing is added. `consumedDays` is filled in FIFO by work date when a
+// balance-drawn compensatory leave is finally approved, so
+// `days - consumedDays` is what's still available on this credit.
+//
+// This is deliberately separate from the older compensatory flow, where the
+// employee names the worked date(s) on the leave application itself and the
+// work date IS the entitlement (Leave.extraWorkStartDate/extraWorkEndDate).
+// Both flows stay live; see src/lib/comp-off.ts for how they share the
+// "a work date can never be used twice" rule.
+model CompOffCredit {
+  id               String   @id
+  employeeEmail    String
+  workDate         DateTime @db.Date
+  days             Decimal  @db.Decimal(2, 1)
+  reason           String
+  status           String   @default("pending")
+  consumedDays     Decimal  @default(0) @db.Decimal(3, 1)
+  // "employee" (recorded in the portal) or "import" (loaded by HR from the
+  // pre-portal spreadsheet, already accepted).
+  source           String   @default("employee")
+  reviewedBy       String   @default("")
+  reviewedOn       String   @default("")
+  reviewerComments String   @default("")
+  createdAt        DateTime @default(now())
+
+  employee      Employee       @relation(fields: [employeeEmail], references: [email])
+  notifications Notification[]
+
+  @@index([employeeEmail, status])
+  @@index([employeeEmail, workDate])
 }

@@ -17,6 +17,8 @@ import {
   getWorkingWeekends,
   getOpeningBalance,
   getBalanceSnapshot,
+  getCompOffSummary,
+  getCompOffCredits,
 } from "@/lib/db";
 import {
   calculateBalance,
@@ -165,6 +167,8 @@ export async function POST(req: NextRequest) {
     const allLeaves = await getLeavesByEmployee(user.email);
     const openingBalance = await getOpeningBalance(user.email);
     const snapshot = await getBalanceSnapshot(user.email);
+    const compOff = await getCompOffSummary(user.email);
+    const compOffCredits = await getCompOffCredits(user.email);
 
     const balancesByYear: Record<string, BalanceInfo> = {};
     for (const yearStr of Object.keys(daysByYear)) {
@@ -179,7 +183,8 @@ export async function POST(req: NextRequest) {
         openingBalance || undefined,
         snapshot || undefined,
         year,
-        asOfDate
+        asOfDate,
+        compOff
       );
     }
 
@@ -192,7 +197,8 @@ export async function POST(req: NextRequest) {
       startDate,
       halfDayPeriod,
       allLeaves,
-      { startDate: extraWorkStartDate, endDate: extraWorkEndDate }
+      { startDate: extraWorkStartDate, endDate: extraWorkEndDate },
+      compOffCredits
     );
 
     if (!validation.valid) {

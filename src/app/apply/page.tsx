@@ -44,6 +44,10 @@ export default function ApplyLeave() {
   const { user, status } = useAuth();
   const router = useRouter();
   const [availableTypes, setAvailableTypes] = useState<string[]>([]);
+  // Banked Compensatory Off. With a balance the additional-work-date inputs
+  // are hidden and the request draws from it (FIFO, oldest work date first);
+  // with none, the employee names the day they worked as before.
+  const [compOffRemaining, setCompOffRemaining] = useState(0);
   const [holidayDates, setHolidayDates] = useState<string[]>([]);
   const [workingWeekendDates, setWorkingWeekendDates] = useState<string[]>([]);
   const [form, setForm] = useState({
@@ -66,6 +70,7 @@ export default function ApplyLeave() {
     form.leaveType as LeaveType
   );
   const isCompensatory = form.leaveType === "compensatory";
+  const drawsFromCompOffBalance = isCompensatory && compOffRemaining > 0;
 
   useEffect(() => {
     if (status === "unauthenticated") router.replace("/");
@@ -78,6 +83,7 @@ export default function ApplyLeave() {
         fetch("/api/holidays").then((r) => r.json()),
       ]).then(([balanceData, holidayData]) => {
         setAvailableTypes(balanceData.availableTypes || []);
+        setCompOffRemaining(balanceData.compOff?.remaining ?? 0);
         setHolidayDates(holidayData.dates || []);
         setWorkingWeekendDates(holidayData.workingWeekendDates || []);
       });
@@ -130,10 +136,14 @@ export default function ApplyLeave() {
           startDate: form.startDate,
           endDate: effectiveEndDate,
           halfDayPeriod: form.halfDayPeriod || undefined,
-          extraWorkStartDate: isCompensatory
-            ? form.extraWorkStartDate
-            : undefined,
-          extraWorkEndDate: isCompensatory ? form.extraWorkEndDate : undefined,
+          extraWorkStartDate:
+            isCompensatory && !drawsFromCompOffBalance
+              ? form.extraWorkStartDate
+              : undefined,
+          extraWorkEndDate:
+            isCompensatory && !drawsFromCompOffBalance
+              ? form.extraWorkEndDate
+              : undefined,
           reason: form.reason,
         }),
       });
@@ -279,8 +289,22 @@ export default function ApplyLeave() {
             )}
           </div>
 
+          {/* Compensatory off drawn from the banked balance — no work dates
+              needed, the credits already record them. */}
+          {drawsFromCompOffBalance && (
+            <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 px-4 py-3">
+              <p className="text-sm font-semibold text-indigo-900">
+                Drawing from your Compensatory Off balance
+              </p>
+              <p className="text-xs text-indigo-900/70 mt-0.5">
+                You have {compOffRemaining} day(s) available, used oldest
+                additional work day first. No work date needed here.
+              </p>
+            </div>
+          )}
+
           {/* Compensatory off — the extra day(s) actually worked */}
-          {isCompensatory && (
+          {isCompensatory && !drawsFromCompOffBalance && (
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1.5">

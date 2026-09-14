@@ -3,10 +3,14 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import LeavePopup from "./LeavePopup";
+import CompOffPopup from "./CompOffPopup";
+import CompOffReviewPopup from "./CompOffReviewPopup";
 
 interface NotificationItem {
   id: string;
-  leaveId: string;
+  kind: "comment" | "comp_off_request" | "comp_off_decision";
+  leaveId?: string;
+  creditId?: string;
   leaveType: string;
   employeeName: string;
   commentAuthorName: string;
@@ -52,6 +56,10 @@ export default function NotificationBell({
   const [open, setOpen] = useState(false);
   const [activeNotification, setActiveNotification] =
     useState<NotificationItem | null>(null);
+  // Compensatory Off popups: the reviewer's accept/reject for one recorded
+  // work day, and the employee's own balance view.
+  const [reviewCreditId, setReviewCreditId] = useState<string | null>(null);
+  const [showCompOff, setShowCompOff] = useState(false);
 
   const fetchNotifications = () => {
     fetch("/api/notifications")
@@ -85,6 +93,18 @@ export default function NotificationBell({
           prev.map((x) => (x.id === n.id ? { ...x, read: true } : x))
         );
       });
+    }
+
+    // Compensatory Off credits aren't leave requests — they open their own
+    // popups: the reviewer's accept/reject for a request, the employee's own
+    // balance for the decision that came back.
+    if (n.kind === "comp_off_request" && n.creditId) {
+      setReviewCreditId(n.creditId);
+      return;
+    }
+    if (n.kind === "comp_off_decision") {
+      setShowCompOff(true);
+      return;
     }
 
     // A new submission belongs in the Manager Approval queue, not the
@@ -149,7 +169,11 @@ export default function NotificationBell({
                         <span className="font-semibold">
                           {n.commentAuthorName}
                         </span>{" "}
-                        {n.isSubmission ? (
+                        {n.kind === "comp_off_request" ? (
+                          <>has recorded an additional work day</>
+                        ) : n.kind === "comp_off_decision" ? (
+                          <>has reviewed your additional work day</>
+                        ) : n.isSubmission ? (
                           <>
                             has submitted a new{" "}
                             {TYPE_LABELS[n.leaveType] || n.leaveType} request
@@ -191,7 +215,7 @@ export default function NotificationBell({
         )}
       </div>
 
-      {activeNotification && (
+      {activeNotification?.leaveId && (
         <LeavePopup
           leaveId={activeNotification.leaveId}
           currentUserEmail={currentUserEmail}
@@ -199,6 +223,15 @@ export default function NotificationBell({
           onClose={() => setActiveNotification(null)}
         />
       )}
+
+      {reviewCreditId && (
+        <CompOffReviewPopup
+          creditId={reviewCreditId}
+          onClose={() => setReviewCreditId(null)}
+        />
+      )}
+
+      {showCompOff && <CompOffPopup onClose={() => setShowCompOff(false)} />}
     </>
   );
 }

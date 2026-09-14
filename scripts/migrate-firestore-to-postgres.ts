@@ -240,15 +240,21 @@ async function migrateInternalNotes(leaveIds: Set<string>) {
 async function migrateNotifications(employeeEmails: Set<string>, leaveIds: Set<string>) {
   const snap = await adminDb.collection("notifications").get();
   const all = snap.docs.map((d) => d.data() as Notification);
+  // Notification.leaveId became optional when Compensatory Off credit
+  // notifications were added (they carry a creditId instead), but every
+  // Firestore-era notification is leave-scoped — a row without one here is
+  // corrupt and belongs in the orphan report.
+  const hasLeave = (n: Notification): n is Notification & { leaveId: string } =>
+    Boolean(n.leaveId) && leaveIds.has(n.leaveId!);
   const valid = all.filter(
-    (n) => employeeEmails.has(n.recipientEmail.toLowerCase()) && leaveIds.has(n.leaveId)
+    (n) => employeeEmails.has(n.recipientEmail.toLowerCase()) && hasLeave(n)
   );
   reportOrphans(
     "Notifications",
     all.filter(
-      (n) => !employeeEmails.has(n.recipientEmail.toLowerCase()) || !leaveIds.has(n.leaveId)
+      (n) => !employeeEmails.has(n.recipientEmail.toLowerCase()) || !hasLeave(n)
     ),
-    (n) => `${n.id} (recipient ${n.recipientEmail}, leave ${n.leaveId})`
+    (n) => `${n.id} (recipient ${n.recipientEmail}, leave ${n.leaveId ?? "none"})`
   );
 
   for (const batch of chunk(valid, 200)) {

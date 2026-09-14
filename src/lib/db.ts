@@ -14,21 +14,31 @@ import {
   OpeningBalance,
   BalanceSnapshot,
   Notification,
+  NotificationKind,
   LeaveBalance,
+  CompOffCredit,
+  CompOffCreditStatus,
+  CompOffSummary,
 } from "./types";
 import {
   generateLeaveId,
+  generateCompOffCreditId,
   generateCommentId,
   generateNoteId,
   generateNotificationId,
 } from "./ids";
 import {
   LEAVE_TYPE_LABELS,
+  formatDate,
   formatDateRange,
   calculateBalance,
 } from "./leave-calculator";
 import { sendMail } from "./mailer";
 import { SYSTEM_ADMIN_EMAIL, isSystemAdmin } from "./system-admin";
+import {
+  planFifoConsumption,
+  summarize as summarizeCompOff,
+} from "./comp-off";
 
 // ── Date/decimal <-> plain-object conversion helpers ────────────
 // The app talks in plain strings/numbers throughout (ISO date strings,
@@ -232,7 +242,9 @@ function rowToBalanceSnapshot(row: {
 function rowToNotification(row: {
   id: string;
   recipientEmail: string;
-  leaveId: string;
+  leaveId: string | null;
+  kind: string;
+  creditId: string | null;
   leaveType: string;
   employeeName: string;
   commentAuthorName: string;
@@ -245,7 +257,11 @@ function rowToNotification(row: {
   return {
     id: row.id,
     recipientEmail: row.recipientEmail,
-    leaveId: row.leaveId,
+    kind: row.kind as NotificationKind,
+    // Omitted rather than nulled when absent, matching how rowToLeaveRequest
+    // treats its optional columns.
+    ...(row.leaveId ? { leaveId: row.leaveId } : {}),
+    ...(row.creditId ? { creditId: row.creditId } : {}),
     leaveType: row.leaveType as LeaveType,
     employeeName: row.employeeName,
     commentAuthorName: row.commentAuthorName,
@@ -253,6 +269,36 @@ function rowToNotification(row: {
     isInternalNote: row.isInternalNote,
     isSubmission: row.isSubmission,
     read: row.read,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+function rowToCompOffCredit(row: {
+  id: string;
+  employeeEmail: string;
+  workDate: Date;
+  days: { toNumber(): number };
+  reason: string;
+  status: string;
+  consumedDays: { toNumber(): number };
+  source: string;
+  reviewedBy: string;
+  reviewedOn: string;
+  reviewerComments: string;
+  createdAt: Date;
+}): CompOffCredit {
+  return {
+    id: row.id,
+    employeeEmail: row.employeeEmail,
+    workDate: dateToStr(row.workDate),
+    days: row.days.toNumber(),
+    reason: row.reason,
+    status: row.status as CompOffCreditStatus,
+    consumedDays: row.consumedDays.toNumber(),
+    source: row.source as "employee" | "import",
+    reviewedBy: row.reviewedBy,
+    reviewedOn: row.reviewedOn,
+    reviewerComments: row.reviewerComments,
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -819,11 +865,13 @@ export async function computeAllEmployeeBalances(): Promise<
   Record<string, LeaveBalance>
 > {
   const employees = await getEmployees();
-  const [approvedByEmail, openingBalances, snapshots] = await Promise.all([
-    getAllApprovedLeavesGroupedByEmployee(),
-    getAllOpeningBalances(),
-    getAllBalanceSnapshots(),
-  ]);
+  const [approvedByEmail, openingBalances, snapshots, compOff] =
+    await Promise.all([
+      getAllApprovedLeavesGroupedByEmployee(),
+      getAllOpeningBalances(),
+      getAllBalanceSnapshots(),
+      getCompOffSummaries(employees.map((e) => e.email)),
+    ]);
 
   const result: Record<string, LeaveBalance> = {};
   for (const emp of employees) {
@@ -832,7 +880,10 @@ export async function computeAllEmployeeBalances(): Promise<
       emp,
       approved,
       openingBalances.get(emp.email),
-      snapshots.get(emp.email)
+      snapshots.get(emp.email),
+      undefined,
+      undefined,
+      compOff.get(emp.email.toLowerCase())
     );
     result[emp.email] = balance.remaining;
   }
@@ -1106,6 +1157,304 @@ export async function getNotificationById(
 
 export async function markNotificationRead(id: string): Promise<void> {
   await prisma.notification.update({ where: { id }, data: { read: true } });
+}
+
+// ── Compensatory Off credits ────────────────────────────────────
+// Banked additional work days. See src/lib/comp-off.ts for the shared rules
+// and prisma/schema.prisma's CompOffCredit for the row shape.
+
+export async function getCompOffCredits(
+  email: string
+): Promise<CompOffCredit[]> {
+  const rows = await prisma.compOffCredit.findMany({
+    where: { employeeEmail: email.toLowerCase() },
+    orderBy: [{ workDate: "asc" }, { createdAt: "asc" }],
+  });
+  return rows.map(rowToCompOffCredit);
+}
+
+export async function getCompOffCreditById(
+  id: string
+): Promise<CompOffCredit | null> {
+  const row = await prisma.compOffCredit.findUnique({ where: { id } });
+  return row ? rowToCompOffCredit(row) : null;
+}
+
+export async function createCompOffCredit(credit: {
+  employeeEmail: string;
+  workDate: string;
+  days: number;
+  reason: string;
+  status?: CompOffCreditStatus;
+  source?: "employee" | "import";
+  reviewedBy?: string;
+  reviewedOn?: string;
+}): Promise<string> {
+  const id = generateCompOffCreditId();
+  await prisma.compOffCredit.create({
+    data: {
+      id,
+      employeeEmail: credit.employeeEmail.toLowerCase(),
+      workDate: strToDateRequired(credit.workDate),
+      days: credit.days,
+      reason: credit.reason,
+      status: credit.status ?? "pending",
+      source: credit.source ?? "employee",
+      reviewedBy: credit.reviewedBy ?? "",
+      reviewedOn: credit.reviewedOn ?? "",
+    },
+  });
+  return id;
+}
+
+// Accept or reject a pending credit. Conditional on the row still being
+// pending so two reviewers clicking at once can't both "win" — the count
+// tells the caller whether this call was the one that decided it.
+export async function decideCompOffCredit(
+  id: string,
+  status: "accepted" | "rejected",
+  reviewedBy: string,
+  comments: string
+): Promise<boolean> {
+  const { count } = await prisma.compOffCredit.updateMany({
+    where: { id, status: "pending" },
+    data: {
+      status,
+      reviewedBy,
+      reviewedOn: new Date().toISOString().split("T")[0],
+      reviewerComments: comments,
+    },
+  });
+  return count > 0;
+}
+
+// The `explicitDays` half of a comp-off summary: approved comp-off leaves
+// that carried their own work dates, and so brought their own entitlement
+// rather than drawing on the balance.
+function explicitCompOffDays(leaves: LeaveRequest[]): number {
+  return leaves
+    .filter(
+      (l) =>
+        l.leaveType === "compensatory" &&
+        l.status === "approved" &&
+        l.extraWorkStartDate &&
+        l.extraWorkEndDate
+    )
+    .reduce((sum, l) => sum + l.days, 0);
+}
+
+export async function getCompOffSummary(
+  email: string
+): Promise<CompOffSummary> {
+  const [credits, leaves] = await Promise.all([
+    getCompOffCredits(email),
+    getApprovedLeavesByEmployee(email),
+  ]);
+  return summarizeCompOff(credits, explicitCompOffDays(leaves));
+}
+
+// Batch version for the whole-company paths (the nightly admin balance cache
+// and the manager view) — two queries total, never one per employee, per the
+// standing rule about full-table scans on this project.
+export async function getCompOffSummaries(
+  emails: string[]
+): Promise<Map<string, CompOffSummary>> {
+  const lowered = emails.map((e) => e.toLowerCase());
+  const [creditRows, leaveRows] = await Promise.all([
+    prisma.compOffCredit.findMany({
+      where: { employeeEmail: { in: lowered } },
+      orderBy: [{ workDate: "asc" }, { createdAt: "asc" }],
+    }),
+    prisma.leave.findMany({
+      where: {
+        employeeEmail: { in: lowered },
+        leaveType: "compensatory",
+        status: "approved",
+        NOT: { extraWorkStartDate: null },
+      },
+      select: { employeeEmail: true, days: true },
+    }),
+  ]);
+
+  const creditsByEmail = new Map<string, CompOffCredit[]>();
+  for (const row of creditRows) {
+    const credit = rowToCompOffCredit(row);
+    const list = creditsByEmail.get(credit.employeeEmail) ?? [];
+    list.push(credit);
+    creditsByEmail.set(credit.employeeEmail, list);
+  }
+  const explicitByEmail = new Map<string, number>();
+  for (const row of leaveRows) {
+    const email = row.employeeEmail.toLowerCase();
+    explicitByEmail.set(
+      email,
+      (explicitByEmail.get(email) ?? 0) + row.days.toNumber()
+    );
+  }
+
+  const result = new Map<string, CompOffSummary>();
+  for (const email of lowered) {
+    result.set(
+      email,
+      summarizeCompOff(
+        creditsByEmail.get(email) ?? [],
+        explicitByEmail.get(email) ?? 0
+      )
+    );
+  }
+  return result;
+}
+
+// Spend `days` from this employee's accepted credits, oldest work date
+// first. Runs inside the caller's transaction so the status change and the
+// consumption commit together; returns false when the balance no longer
+// covers the request (someone else spent it first).
+export async function consumeCompOffCredits(
+  tx: Prisma.TransactionClient,
+  email: string,
+  days: number
+): Promise<boolean> {
+  const rows = await tx.compOffCredit.findMany({
+    where: { employeeEmail: email.toLowerCase(), status: "accepted" },
+    orderBy: [{ workDate: "asc" }, { createdAt: "asc" }],
+  });
+  const plan = planFifoConsumption(rows.map(rowToCompOffCredit), days);
+  if (!plan) return false;
+  for (const step of plan) {
+    await tx.compOffCredit.update({
+      where: { id: step.id },
+      data: { consumedDays: step.consumedDays },
+    });
+  }
+  return true;
+}
+
+// Final-approve a balance-drawn compensatory leave and spend the credits it
+// draws on, in one transaction. Returns false (changing nothing) when the
+// balance no longer covers it — another approval got there first.
+export async function approveWithCompOffConsumption(
+  leaveId: string,
+  employeeEmail: string,
+  days: number,
+  reviewedBy: string,
+  comments: string
+): Promise<boolean> {
+  return prisma.$transaction(async (tx) => {
+    const ok = await consumeCompOffCredits(tx, employeeEmail, days);
+    if (!ok) return false;
+    await tx.leave.update({
+      where: { id: leaveId },
+      data: {
+        status: "approved",
+        reviewedBy,
+        reviewedOn: new Date().toISOString().split("T")[0],
+        reviewerComments: comments,
+      },
+    });
+    return true;
+  });
+}
+
+// In-app + email fan-out for a comp-off credit. Deliberately a sibling of
+// notifyRecipients rather than a parameter on it: that one is leave-shaped
+// all the way through (it loads a Leave, builds a date range, threads the
+// email by leave id), and bending it would make both harder to follow.
+async function notifyCompOffRecipients(
+  creditId: string,
+  kind: Extract<NotificationKind, "comp_off_request" | "comp_off_decision">,
+  actorEmail: string,
+  actorName: string,
+  message: string
+): Promise<void> {
+  const credit = await getCompOffCreditById(creditId);
+  if (!credit) return;
+  const employee = await getEmployeeByEmail(credit.employeeEmail);
+  if (!employee) return;
+
+  const recipients = new Set<string>();
+  if (kind === "comp_off_request") {
+    // Whoever can act on it: the line manager, plus HR admins (minus the
+    // automation account, which is the mailbox these are sent from).
+    if (employee.managerEmail) recipients.add(employee.managerEmail.toLowerCase());
+    const admins = await prisma.employee.findMany({
+      where: { role: "admin", email: { not: SYSTEM_ADMIN_EMAIL } },
+      select: { email: true },
+    });
+    for (const a of admins) recipients.add(a.email.toLowerCase());
+  } else {
+    recipients.add(employee.email.toLowerCase());
+  }
+
+  const emailRecipients = Array.from(recipients);
+  // Same rule as notifyRecipients: the actor still gets the email but never
+  // an in-app bell entry for their own action.
+  recipients.delete(actorEmail.toLowerCase());
+
+  if (recipients.size > 0) {
+    await prisma.notification.createMany({
+      data: Array.from(recipients).map((recipientEmail) => ({
+        id: generateNotificationId(),
+        recipientEmail,
+        kind,
+        creditId,
+        leaveId: null,
+        leaveType: "compensatory",
+        employeeName: employee.name,
+        commentAuthorName: actorName,
+        commentPreview: message.slice(0, 140),
+        isInternalNote: false,
+        isSubmission: false,
+        read: false,
+        createdAt: new Date(),
+      })),
+    });
+  }
+
+  if (emailRecipients.length === 0) return;
+  const link = `${process.env.APP_BASE_URL || ""}/dashboard`;
+  const subject = `[Compensatory Off] ${employee.name}`;
+  const text = `${message}\n\nWork date: ${formatDate(credit.workDate)} — ${credit.days} day(s)\nReason: ${credit.reason}\n\nView it here: ${link}`;
+  const html = `<p>${message}</p><p><b>Work date:</b> ${formatDate(credit.workDate)} — ${credit.days} day(s)<br/><b>Reason:</b> ${credit.reason}</p><p><a href="${link}">View it here</a></p>`;
+  await sendMail({
+    to: emailRecipients,
+    subject,
+    html,
+    text,
+    messageId: `<compoff-${creditId}@shikho.com>`,
+  });
+}
+
+export async function notifyCompOffRequested(
+  creditId: string,
+  employeeName: string,
+  actorEmail: string
+): Promise<void> {
+  await notifyCompOffRecipients(
+    creditId,
+    "comp_off_request",
+    actorEmail,
+    employeeName,
+    `${employeeName} has recorded an additional work day and is requesting Compensatory Off credit for it.`
+  );
+}
+
+export async function notifyCompOffDecided(
+  creditId: string,
+  status: "accepted" | "rejected",
+  reviewerEmail: string,
+  reviewerName: string,
+  comments: string
+): Promise<void> {
+  const verb = status === "accepted" ? "accepted" : "rejected";
+  await notifyCompOffRecipients(
+    creditId,
+    "comp_off_decision",
+    reviewerEmail,
+    reviewerName,
+    `${reviewerName} has ${verb} your additional work day.${
+      comments ? ` Comment: ${comments}` : ""
+    }`
+  );
 }
 
 // ── Internal notes (manager/admin only — never exposed to the employee) ──

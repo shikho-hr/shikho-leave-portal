@@ -25,6 +25,10 @@ export function generateNotificationId(): string {
   return generateId("NOTIF");
 }
 
+export function generateCompOffCreditId(): string {
+  return generateId("CO");
+}
+
 // Used only by the one-off historical leave import script — distinct
 // prefix for traceability/reversibility, same collision-safe shape as the
 // organic generators above (not the old sequential HIST-001-style test

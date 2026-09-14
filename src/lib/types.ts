@@ -113,10 +113,21 @@ export interface LeaveComment {
 // their manager, and all HR/admins (minus whoever wrote the comment) at
 // comment-creation time. Regular comments only, not internal notes.
 
+// What a notification is about. "comment" covers every leave-scoped
+// notification (comments, internal notes, submissions) and is the default;
+// the comp_off_* kinds are about a CompOffCredit and carry creditId with no
+// leaveId at all.
+export type NotificationKind =
+  | "comment"
+  | "comp_off_request"
+  | "comp_off_decision";
+
 export interface Notification {
   id: string;
   recipientEmail: string;
-  leaveId: string;
+  kind: NotificationKind;
+  leaveId?: string; // absent for comp_off_* kinds
+  creditId?: string; // present only for comp_off_* kinds
   leaveType: LeaveType;
   employeeName: string;
   commentAuthorName: string;
@@ -126,6 +137,36 @@ export interface Notification {
   // leave application — rendered as "X submitted a new Y request", not "X commented"
   read: boolean;
   createdAt: string; // ISO datetime
+}
+
+// ── Compensatory Off credits ────────────────────────────────────
+// A banked additional work day. See prisma/schema.prisma's CompOffCredit
+// and src/lib/comp-off.ts.
+
+export type CompOffCreditStatus = "pending" | "accepted" | "rejected";
+
+export interface CompOffCredit {
+  id: string;
+  employeeEmail: string;
+  workDate: string; // ISO date
+  days: number; // 0.5 or 1
+  reason: string;
+  status: CompOffCreditStatus;
+  consumedDays: number;
+  source: "employee" | "import";
+  reviewedBy: string;
+  reviewedOn: string;
+  reviewerComments: string;
+  createdAt: string; // ISO datetime
+}
+
+// Totals behind the Compensatory Off card and the balance-mode leave check.
+export interface CompOffSummary {
+  accepted: number; // total days ever accepted
+  consumed: number; // of those, days already spent on approved leave
+  remaining: number; // accepted - consumed: what's spendable right now
+  pending: number; // recorded but not yet accepted/rejected
+  explicitDays: number; // approved comp-off days that carried their own work dates
 }
 
 // ── Holidays ────────────────────────────────────────────────────

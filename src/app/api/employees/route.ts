@@ -6,6 +6,7 @@ import {
   getApprovedLeavesGroupedByEmployees,
   getAllOpeningBalances,
   getAllBalanceSnapshots,
+  getCompOffSummaries,
   getCachedEmployeeBalances,
   refreshEmployeeBalanceCache,
 } from "@/lib/db";
@@ -47,11 +48,13 @@ export async function GET() {
     const employees = (await getEmployeesByManager(user.email)).filter(
       (e) => e.status === "active"
     );
-    const [approvedByEmail, openingBalances, snapshots] = await Promise.all([
-      getApprovedLeavesGroupedByEmployees(employees.map((e) => e.email)),
-      getAllOpeningBalances(),
-      getAllBalanceSnapshots(),
-    ]);
+    const [approvedByEmail, openingBalances, snapshots, compOff] =
+      await Promise.all([
+        getApprovedLeavesGroupedByEmployees(employees.map((e) => e.email)),
+        getAllOpeningBalances(),
+        getAllBalanceSnapshots(),
+        getCompOffSummaries(employees.map((e) => e.email)),
+      ]);
 
     const enriched = employees.map((emp) => {
       const approved = approvedByEmail.get(emp.email) || [];
@@ -59,7 +62,10 @@ export async function GET() {
         emp,
         approved,
         openingBalances.get(emp.email),
-        snapshots.get(emp.email)
+        snapshots.get(emp.email),
+        undefined,
+        undefined,
+        compOff.get(emp.email.toLowerCase())
       );
       return {
         ...emp,

@@ -8,7 +8,17 @@ import {
   HalfDayPeriod,
   OpeningBalance,
   BalanceSnapshot,
+  CompOffCredit,
+  CompOffSummary,
 } from "./types";
+import {
+  WORK_DATE_ALREADY_USED,
+  datesInRange,
+  firstExhaustedDate,
+  isBalanceDrawn,
+  round,
+  workDateUsage,
+} from "./comp-off";
 import {
   parseISO,
   isAfter,
@@ -46,6 +56,9 @@ export const HALF_DAY_ELIGIBLE_TYPES: LeaveType[] = [
   "wfh",
   "offsite_attendance",
   "wfh_deployment",
+  // Compensatory Off banks additional work days in half-day steps, so the
+  // leave taken against them has to be splittable the same way (2026-09-14).
+  "compensatory",
 ];
 
 // Off-site Attendance / WFH - Deployment are unlimited — tracked and
@@ -454,7 +467,8 @@ export function calculateBalance(
   openingBalance?: OpeningBalance,
   snapshot?: BalanceSnapshot,
   year?: number,
-  asOfDate: Date = new Date()
+  asOfDate: Date = new Date(),
+  compOff?: CompOffSummary
 ): BalanceInfo {
   const targetYear = year || new Date().getFullYear();
 
@@ -548,6 +562,24 @@ export function calculateBalance(
     used.ladies_wfh = usedThisMonth ? 1 : 0;
   }
 
+  // Compensatory Off is earned, never granted: entitlement comes entirely
+  // from accepted CompOffCredit rows plus any leave that brought its own
+  // work dates with it. Counting `explicitDays` on BOTH sides keeps the
+  // card honest — Remaining shows the spendable balance, Taken shows every
+  // comp-off day actually taken, and Remaining + Taken = Entitled:
+  //
+  //   (accepted - consumed) + (consumed + explicitDays) = accepted + explicitDays
+  //
+  // It is also a lifetime running total, not year-scoped like sick/casual,
+  // so a banked day survives into the next year (HR: it never expires).
+  // Without a compOff argument this falls back to the pre-2026-09-14
+  // behaviour (entitled 0), so an un-updated caller degrades rather than
+  // breaks.
+  if (compOff) {
+    entitled.compensatory = compOff.accepted + compOff.explicitDays;
+    used.compensatory = compOff.consumed + compOff.explicitDays;
+  }
+
   const remaining: LeaveBalance = {
     sick: Math.max(entitled.sick - used.sick, 0),
     casual: Math.max(entitled.casual - used.casual, 0),
@@ -582,7 +614,10 @@ export function validateLeaveRequest(
   requestStartDate: string,
   halfDayPeriod?: HalfDayPeriod,
   existingLeaves: LeaveRequest[] = [],
-  extraWorkDates?: { startDate?: string; endDate?: string }
+  extraWorkDates?: { startDate?: string; endDate?: string },
+  // This employee's banked additional work days, for the "a work date can
+  // never be used twice" check on an explicit-date compensatory request.
+  compOffCredits: CompOffCredit[] = []
 ): { valid: boolean; error?: string } {
   // As-of the leave's own start date, not "today" — a backdated request
   // must be judged against the employee's probation status at the time,
@@ -600,40 +635,69 @@ export function validateLeaveRequest(
     };
   }
 
-  // Compensatory Off requires recording which extra day(s) were worked
-  if (
-    leaveType === "compensatory" &&
-    (!extraWorkDates?.startDate || !extraWorkDates?.endDate)
-  ) {
-    return {
-      valid: false,
-      error: "Please specify the date(s) you worked extra for this compensatory off.",
-    };
-  }
+  // ── Compensatory Off ──────────────────────────────────────────
+  // Two modes, decided by whether work dates came with the request:
+  //   explicit  — the named work date is itself the entitlement, so no
+  //               balance is consulted; it only has to be unused.
+  //   balance   — drawn from accepted CompOffCredit rows, so there must be
+  //               enough left after whatever other requests are already in
+  //               flight. FIFO consumption happens at final approval.
+  if (leaveType === "compensatory") {
+    const hasWorkDates = Boolean(
+      extraWorkDates?.startDate && extraWorkDates?.endDate
+    );
 
-  // The same extra-work day(s) can't be claimed as compensatory off twice —
-  // check for date-range overlap against this employee's own non-rejected
-  // compensatory-off requests (a rejected one frees the date back up, same
-  // convention as countNonRejectedLifetime below).
-  if (
-    leaveType === "compensatory" &&
-    extraWorkDates?.startDate &&
-    extraWorkDates?.endDate
-  ) {
-    const alreadyUsed = existingLeaves.some((l) => {
-      if (l.leaveType !== "compensatory" || l.status === "rejected")
-        return false;
-      if (!l.extraWorkStartDate || !l.extraWorkEndDate) return false;
-      return (
-        extraWorkDates.startDate! <= l.extraWorkEndDate &&
-        l.extraWorkStartDate <= extraWorkDates.endDate!
+    if (hasWorkDates) {
+      // A work date can never be claimed twice — across BOTH banked credits
+      // and other explicit-date leaves. Half days are the one exception:
+      // the same date may be split, as long as the total stays within one
+      // full day. See workDateUsage() in comp-off.ts.
+      const usage = workDateUsage(compOffCredits, existingLeaves);
+      const dates = datesInRange(
+        extraWorkDates!.startDate!,
+        extraWorkDates!.endDate!
       );
-    });
-    if (alreadyUsed) {
-      return {
-        valid: false,
-        error: "This Additional Work Date has already been used",
-      };
+      const exhausted = firstExhaustedDate(usage, dates, days / dates.length);
+      if (exhausted) {
+        return { valid: false, error: WORK_DATE_ALREADY_USED };
+      }
+    } else {
+
+      // Balance mode. Days already spoken for by this employee's own
+      // in-flight balance-drawn requests can't be spent twice, so subtract
+      // them before comparing — the approval that consumes credits happens
+      // later, and two pending requests must not both pass here.
+      const compOffRemaining =
+        balancesByYear[String(parseISO(requestStartDate).getFullYear())]
+          ?.remaining.compensatory ?? 0;
+      const reserved = existingLeaves
+        .filter(
+          (l) =>
+            isBalanceDrawn(l) &&
+            (l.status === "pending" || l.status === "manager_approved")
+        )
+        .reduce((sum, l) => sum + l.days, 0);
+      const available = round(compOffRemaining - reserved);
+
+      if (days > available) {
+        const tail =
+          " Reduce the request, or specify the date(s) you worked extra instead.";
+        let error: string;
+        if (available > 0) {
+          error = `You have ${available} day(s) of Compensatory Off available.${tail}`;
+        } else if (reserved > 0) {
+          // They do have credits, but every one is already spoken for by a
+          // request still waiting on a decision — say so, rather than
+          // claiming they have no balance at all.
+          error = `Your Compensatory Off balance of ${round(
+            compOffRemaining
+          )} day(s) is already committed to ${reserved} day(s) of requests awaiting approval.${tail}`;
+        } else {
+          error =
+            "You have no Compensatory Off balance. Please specify the date(s) you worked extra for this compensatory off.";
+        }
+        return { valid: false, error };
+      }
     }
   }
 
@@ -777,6 +841,11 @@ export function validateLeaveRequest(
   // whole point of that exception, not a bug.
   const skipBalanceCheck =
     UNLIMITED_LEAVE_TYPES.includes(leaveType) ||
+    // Compensatory Off was fully settled by its own branch above — either
+    // the work date supplied the entitlement, or the credit balance was
+    // checked against in-flight requests. The generic per-year check would
+    // get both cases wrong (it's year-scoped; comp-off is lifetime).
+    leaveType === "compensatory" ||
     (leaveType === "annual" && onProbation && employee.probationAnnualLeaveApproved);
 
   if (!skipBalanceCheck && leaveType === "annual") {
