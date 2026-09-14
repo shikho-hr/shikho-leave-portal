@@ -2,8 +2,20 @@
 // first to produce historical-leaves-clean.json) and
 // .claude/plans/cozy-soaring-mccarthy.md for the full design/rationale.
 // Usage: npx tsx scripts/import-historical-leaves.ts [--commit] [--replace]
-//   --replace  delete every existing "HIST-…" leave first (a previous run
-//              of this import) so the file is loaded fresh, not appended.
+//          [--types=sick,casual] [--year=2026] [--skip-existing]
+//   --replace        delete every existing "HIST-…" leave first (a previous
+//                    run of this import) so the file is loaded fresh, not
+//                    appended. Don't combine with --types/--year.
+//   --types=a,b      only import these leave types (default: all parsed).
+//   --year=YYYY      only import leaves starting in this year.
+//   --skip-existing  skip a row when the employee already has a leave of the
+//                    same type starting on the same date (any status) — so a
+//                    leave HR already recorded by hand isn't duplicated.
+//
+// Rows are written with a blank reviewedOn, so for anyone with a balance
+// snapshot they are history only and never change a balance (see
+// calculateBalance). For someone WITHOUT a snapshot, current-year rows do
+// count as used — the run reports how many matched rows fall in that case.
 import * as fs from "fs";
 import * as path from "path";
 import { prisma } from "../src/lib/prisma";
@@ -20,6 +32,7 @@ interface CleanRow {
   appliedOn: string;
   days: number | null;
   reason: string;
+  halfDayPeriod?: "first_half" | "second_half" | null;
 }
 
 function chunk<T>(items: T[], size: number): T[][] {
@@ -31,10 +44,28 @@ function chunk<T>(items: T[], size: number): T[][] {
 async function main() {
   const commit = process.argv.includes("--commit");
   const replace = process.argv.includes("--replace");
+  const skipExisting = process.argv.includes("--skip-existing");
+  const arg = (name: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.split("=")[1];
+  const onlyTypes = arg("types")?.split(",").map((t) => t.trim()).filter(Boolean);
+  const onlyYear = arg("year");
+  if (replace && (onlyTypes || onlyYear)) {
+    throw new Error("--replace deletes ALL HIST- leaves; don't combine it with --types/--year.");
+  }
   const dataPath = path.join(__dirname, "historical-leaves-clean.json");
   const existingHist = await prisma.leave.count({ where: { id: { startsWith: "HIST-" } } });
   console.log(`Existing HIST- leaves in the database: ${existingHist}${replace ? " (will be deleted first)" : ""}`);
-  const rows: CleanRow[] = JSON.parse(fs.readFileSync(dataPath, "utf-8"));
+  let rows: CleanRow[] = JSON.parse(fs.readFileSync(dataPath, "utf-8"));
+  if (onlyTypes) rows = rows.filter((r) => onlyTypes.includes(r.leaveType));
+  if (onlyYear) rows = rows.filter((r) => r.startDate.startsWith(`${onlyYear}-`));
+  if (onlyTypes || onlyYear) console.log(`Filter: types=${onlyTypes?.join(",") ?? "all"} year=${onlyYear ?? "all"} -> ${rows.length} rows`);
+
+  // For --skip-existing: every (email, type, startDate) already in the table.
+  const existingKeys = new Set<string>();
+  if (skipExisting) {
+    const existing = await prisma.leave.findMany({ select: { employeeEmail: true, leaveType: true, startDate: true } });
+    for (const l of existing) existingKeys.add(`${l.employeeEmail.toLowerCase()}|${l.leaveType}|${l.startDate.toISOString().slice(0, 10)}`);
+  }
+  const snapshotEmails = new Set((await prisma.balanceSnapshot.findMany({ select: { email: true } })).map((s) => s.email.toLowerCase()));
 
   const employees = await getEmployees();
   const employeeByEmail = new Map(employees.map((e) => [e.email.toLowerCase(), e]));
@@ -53,14 +84,22 @@ async function main() {
     reason: string;
     status: string;
     appliedOn: string;
+    halfDayPeriod: string | null;
   }[] = [];
 
+  let skippedExisting = 0;
+  let matchedWithoutSnapshot = 0;
   for (const row of rows) {
     const employee = employeeByEmail.get(row.email);
     if (!employee) {
       skippedUnmatched.push({ sourceRow: row.sourceRow, email: row.email });
       continue;
     }
+    if (skipExisting && existingKeys.has(`${employee.email.toLowerCase()}|${row.leaveType}|${row.startDate}`)) {
+      skippedExisting++;
+      continue;
+    }
+    if (!snapshotEmails.has(employee.email.toLowerCase())) matchedWithoutSnapshot++;
 
     let days = row.days;
     if (days === null) {
@@ -103,6 +142,7 @@ async function main() {
       reason: row.reason,
       status: "approved",
       appliedOn: row.appliedOn,
+      halfDayPeriod: row.halfDayPeriod ?? null,
     });
   }
 
@@ -111,6 +151,8 @@ async function main() {
   console.log(`Skipped (no matching employee): ${skippedUnmatched.length}`);
   const distinctSkippedEmails = new Set(skippedUnmatched.map((s) => s.email));
   console.log(`  distinct unmatched emails: ${distinctSkippedEmails.size}`);
+  if (skipExisting) console.log(`Skipped (same employee/type/start date already recorded): ${skippedExisting}`);
+  console.log(`Matched rows for employees WITHOUT a balance snapshot (these WILL count as used): ${matchedWithoutSnapshot}`);
   if (oddDates.length) {
     console.log(`Rows with implausible cross-year dates (imported with the sheet's day count, start-year attribution):`);
     for (const o of oddDates) console.log(`  row ${o.sourceRow} ${o.email} ${o.start} -> ${o.end} days=${o.days}`);
@@ -156,6 +198,7 @@ async function main() {
             reason: r.reason,
             status: r.status,
             appliedOn: new Date(r.appliedOn),
+            halfDayPeriod: r.halfDayPeriod,
             reviewedBy: "",
             reviewedOn: "",
             reviewerComments: "",

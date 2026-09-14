@@ -13,9 +13,15 @@ leave-record file's ID -> email mapping, then the form's own "Email address"
 """
 import csv
 import json
+import os
 import re
 
-FORM = r"C:\Users\Shikho\Downloads\Leave Application Form (Responses) - Form responses 1.csv"
+# Override with FORM_CSV=<path> to parse a different export (e.g. the
+# 2026 sick/casual-only file loaded on 2026-09-14).
+FORM = os.environ.get(
+    "FORM_CSV",
+    r"C:\Users\Shikho\Downloads\Leave Application Form (Responses) - Form responses 1.csv",
+)
 RECORD = r"C:\Users\Shikho\Downloads\Shikho Employee Leave Record - Final.csv"
 OUT_DIR = r"C:\Users\Shikho\Documents\Claude files\Leave application automation\leave-portal\scripts"
 
@@ -55,7 +61,12 @@ LEAVE_TYPE_MAP = {
     "annual leave": "annual",
     "marriage leave": "marriage",
     "paternity leave": "paternity",
+    "sick leave": "sick",
+    "casual leave": "casual",
 }
+
+# "Leave Duration" column -> the app's halfDayPeriod values.
+HALF_DAY_MAP = {"first half": "first_half", "second half": "second_half"}
 
 PLACEHOLDER = {"", "n/a", "0", "-"}
 
@@ -116,7 +127,7 @@ with open(FORM, encoding="utf-8-sig", newline="") as f:
     header = next(reader)
     rows = list(reader)
 
-TIMESTAMP, EMAIL, TYPE, REASON, START, END, TOTAL_DAYS, CLEAN_ID = 0, 1, 8, 9, 12, 13, 14, 18
+TIMESTAMP, EMAIL, TYPE, REASON, START, END, TOTAL_DAYS, DURATION, CLEAN_ID = 0, 1, 8, 9, 12, 13, 14, 15, 18
 
 clean = []
 skipped = []
@@ -161,6 +172,7 @@ for i, r in enumerate(rows):
         "appliedOn": applied_on,
         "days": days,  # null means: TS side must compute from date range
         "reason": r[REASON].strip(),
+        "halfDayPeriod": HALF_DAY_MAP.get(r[DURATION].strip().lower()),
     })
 
 with open(OUT_DIR + r"\historical-leaves-clean.json", "w", encoding="utf-8") as f:
@@ -169,6 +181,11 @@ with open(OUT_DIR + r"\historical-leaves-parse-skipped.json", "w", encoding="utf
     json.dump(skipped, f, indent=2)
 
 print(f"Historical leaves: {len(clean)} parsed cleanly, {len(skipped)} skipped at parse stage (unparseable email/type/dates)")
+print(f"  source: {FORM}")
+by_type = {}
+for c in clean:
+    by_type[c["leaveType"]] = by_type.get(c["leaveType"], 0) + 1
+print(f"  by type: {dict(sorted(by_type.items()))}; half-day rows: {sum(1 for c in clean if c['halfDayPeriod'])}")
 print(f"  resolved via Clean ID: {matched_by['cleanId']}, via form email only: {matched_by['email']}")
 print(f"  of the {len(clean)} parsed, {sum(1 for c in clean if c['days'] is None)} need days recomputed from dates (Total Leave Days was invalid)")
 print(f"  rows where Clean ID mapped to a different email than the form's: {sum(1 for c in clean if c['formEmail'] and c['formEmail'] != c['email'])}")
