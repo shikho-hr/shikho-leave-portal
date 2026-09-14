@@ -7,6 +7,7 @@ import Navbar from "@/components/Navbar";
 import CommentThread from "@/components/CommentThread";
 import InternalNoteThread from "@/components/InternalNoteThread";
 import Toast from "@/components/Toast";
+import CompOffApprovalQueue from "@/components/CompOffApprovalQueue";
 import { formatDate, formatDateRange } from "@/lib/leave-calculator";
 
 interface PendingLeave {
@@ -125,7 +126,8 @@ function ApprovalsContent() {
   const { user, status } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [tab, setTab] = useState<"pending" | "hr" | "history">("pending");
+  const [tab, setTab] = useState<"pending" | "hr" | "compoff" | "history">("pending");
+  const [compOffCount, setCompOffCount] = useState(0);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const [pendingLeaves, setPendingLeaves] = useState<PendingLeave[]>([]);
   const [hrLeaves, setHrLeaves] = useState<PendingLeave[]>([]);
@@ -165,7 +167,12 @@ function ApprovalsContent() {
   // specific card so it's obvious which one the notification was about.
   useEffect(() => {
     const tabParam = searchParams.get("tab");
-    if (tabParam === "pending" || tabParam === "hr" || tabParam === "history") {
+    if (
+      tabParam === "pending" ||
+      tabParam === "hr" ||
+      tabParam === "compoff" ||
+      tabParam === "history"
+    ) {
       setTab(tabParam);
     }
 
@@ -543,6 +550,21 @@ function ApprovalsContent() {
             </button>
           )}
           <button
+            onClick={() => setTab("compoff")}
+            className={`px-5 py-2 rounded-xl text-sm font-semibold transition-colors ${
+              tab === "compoff"
+                ? "bg-sunrise text-white shadow-sm"
+                : "bg-white text-gray-600 border border-gray-200 hover:border-sunrise/60"
+            }`}
+          >
+            Comp Off Approval
+            {compOffCount > 0 && (
+              <span className="ml-1.5 inline-flex items-center justify-center w-5 h-5 bg-white/20 text-xs font-bold rounded-full">
+                {compOffCount}
+              </span>
+            )}
+          </button>
+          <button
             onClick={() => setTab("history")}
             className={`px-5 py-2 rounded-xl text-sm font-semibold transition-colors ${
               tab === "history"
@@ -613,7 +635,18 @@ function ApprovalsContent() {
         </div>
         )}
 
-        {filteredLeaves.length === 0 ? (
+        {tab === "compoff" ? (
+          <>
+            <p className="text-sm text-gray-500 mb-4">
+              Additional work days your team has recorded. Accepting one adds
+              it to their Compensatory Off balance; rejecting adds nothing.
+            </p>
+            <CompOffApprovalQueue
+              onCountChange={setCompOffCount}
+              onToast={(message, type) => setToast({ message, type })}
+            />
+          </>
+        ) : filteredLeaves.length === 0 ? (
           <div className="bg-white rounded-2xl border border-gray-100 p-10 text-center text-gray-400 shadow-sm">
             {currentLeaves.length > 0
               ? "No leave requests match these filters"

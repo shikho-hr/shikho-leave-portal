@@ -6,6 +6,7 @@ import {
   getCompOffSummary,
   getEmployeeByEmail,
   getLeavesByEmployee,
+  getPendingCompOffQueue,
   notifyCompOffRequested,
 } from "@/lib/db";
 import {
@@ -17,11 +18,27 @@ import {
 import { isSystemAdmin } from "@/lib/system-admin";
 
 // The signed-in employee's banked additional work days, for the
-// Compensatory Off card's pop-up.
-export async function GET() {
+// Compensatory Off card's pop-up — or, with ?view=queue, the pending ones a
+// manager/HR admin can decide, for the Comp Off Approval tab.
+export async function GET(req: NextRequest) {
   const user = await getCurrentUser();
   if (!user)
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  if (new URL(req.url).searchParams.get("view") === "queue") {
+    if (user.role !== "manager" && user.role !== "admin") {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    try {
+      return NextResponse.json(await getPendingCompOffQueue(user));
+    } catch (err) {
+      console.error(err);
+      return NextResponse.json(
+        { error: "Failed to fetch the approval queue" },
+        { status: 500 }
+      );
+    }
+  }
 
   try {
     const [credits, summary] = await Promise.all([

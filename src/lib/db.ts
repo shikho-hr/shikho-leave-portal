@@ -1173,6 +1173,26 @@ export async function getCompOffCredits(
   return rows.map(rowToCompOffCredit);
 }
 
+// Pending credits a reviewer can decide, oldest first: every pending one
+// for an HR admin, or just their own reportees' for a manager. Feeds the
+// "Comp Off Approval" tab on Team's Leave Requests, so a request survives
+// the notification being dismissed.
+export async function getPendingCompOffQueue(
+  reviewer: { email: string; role: string }
+): Promise<(CompOffCredit & { employeeName: string })[]> {
+  const rows = await prisma.compOffCredit.findMany({
+    where: {
+      status: "pending",
+      ...(reviewer.role === "admin"
+        ? {}
+        : { employee: { managerEmail: reviewer.email.toLowerCase() } }),
+    },
+    include: { employee: { select: { name: true } } },
+    orderBy: [{ createdAt: "asc" }],
+  });
+  return rows.map((r) => ({ ...rowToCompOffCredit(r), employeeName: r.employee.name }));
+}
+
 export async function getCompOffCreditById(
   id: string
 ): Promise<CompOffCredit | null> {
