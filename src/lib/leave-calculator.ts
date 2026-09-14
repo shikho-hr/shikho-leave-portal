@@ -222,19 +222,39 @@ function annualLeaveAccrualAsOfDate(today: Date): Date {
 }
 
 // Lifetime AL entitlement: zero until probation ends, then 1 day per
-// ANNUAL_LEAVE_ACCRUAL_DIVISOR calendar days of service, capped at
+// ANNUAL_LEAVE_ACCRUAL_DIVISOR calendar days of service counted from the
+// JOINING date (HR's rule, 2026-09-14 — the probation months count too,
+// they just can't be spent until probation is over), capped at
 // ANNUAL_LEAVE_LIFETIME_CAP — a running total, not a per-calendar-year
-// allowance. Matches the HR sheet's N2 formula exactly (confirmed with the
-// user against the live sheet, 2026-09-09).
+// allowance. Deliberately not fullTimeEffectiveDate: the roster sheet fills
+// that column with "probation end + 1 day" for practically everyone, so
+// using it here silently counted from the end of probation instead.
 function annualLeaveEntitlement(employee: Employee, asOfDate: Date): number {
   if (isOnProbation(employee, asOfDate)) return 0;
-  const ftDate = employee.fullTimeEffectiveDate
-    ? parseISO(employee.fullTimeEffectiveDate)
-    : parseISO(employee.joiningDate);
   const accrualDate = annualLeaveAccrualAsOfDate(asOfDate);
-  const daysSinceJoining = differenceInCalendarDays(accrualDate, ftDate);
+  const daysSinceJoining = differenceInCalendarDays(
+    accrualDate,
+    parseISO(employee.joiningDate)
+  );
   const raw = Math.ceil(daysSinceJoining / ANNUAL_LEAVE_ACCRUAL_DIVISOR);
-  return Math.min(raw, ANNUAL_LEAVE_LIFETIME_CAP);
+  return Math.min(Math.max(raw, 0), ANNUAL_LEAVE_LIFETIME_CAP);
+}
+
+// How much AL the formula above would have added between two dates — used
+// to keep a sheet snapshot's balance growing after its import date instead
+// of freezing it. Only full-time contracts accrue AL at all (see
+// calculateBalance's entitlement tracks), and the lifetime cap is applied
+// by the caller once the snapshot's own number is added in.
+function annualLeaveAccruedBetween(
+  employee: Employee,
+  from: Date,
+  to: Date
+): number {
+  if (employee.contractType !== "full-time") return 0;
+  return Math.max(
+    annualLeaveEntitlement(employee, to) - annualLeaveEntitlement(employee, from),
+    0
+  );
 }
 
 // ── Tele-sales balance ──────────────────────────────────────────
@@ -286,13 +306,12 @@ function freelancerEntitlement(): LeaveBalance {
 //   Pro-rata: 14 minus months missed (Jan=0 missed, Feb=1 missed, etc.)
 // AL: lifetime running total, zero until probation ends, then 1 day per
 //   ANNUAL_LEAVE_ACCRUAL_DIVISOR (24.33) calendar days of service since the
-//   FT/joining date, capped at ANNUAL_LEAVE_LIFETIME_CAP (60) — NOT a
-//   per-calendar-year allowance like SL/CL above. See
-//   annualLeaveEntitlement(). Matches the authoritative HR sheet's own
-//   formula exactly (confirmed with the user 2026-09-09).
+//   JOINING date (not the FT date — see annualLeaveEntitlement()), capped
+//   at ANNUAL_LEAVE_LIFETIME_CAP (60) — NOT a per-calendar-year allowance
+//   like SL/CL above.
 //
 // For tele-sales→FT transitions (fullTimeEffectiveDate is set):
-//   SL, CL, AL calculated from the FT effective date, same rules.
+//   SL and CL calculated from the FT effective date, same rules.
 
 function nonTeleSalesEntitlement(
   employee: Employee,
@@ -476,6 +495,12 @@ export function calculateBalance(
   //
   // `used` is kept consistent with entitled - used = remaining by folding
   // the sheet's already-consumed portion (entitled - balance) into it.
+  //
+  // Annual leave keeps accruing after the snapshot: the sheet is only the
+  // starting point, and the same 1-day-per-24.33-days formula adds to it
+  // from the import date onward (HR's request, 2026-09-14), never past the
+  // lifetime cap. Sick/casual are year-scoped fixed allowances, so their
+  // sheet entitlement stands as-is.
   if (snapshot) {
     const snapshotDate = snapshot.importedAt.slice(0, 10);
     const approvedSinceSnapshot = approvedLeaves.filter(
@@ -492,6 +517,17 @@ export function calculateBalance(
         used[type] = entry.entitled - entry.balance + usedSinceSnapshot[type];
       }
     });
+    if (snapshot.annual) {
+      const accrued = annualLeaveAccruedBetween(
+        employee,
+        parseISO(snapshotDate),
+        asOfDate
+      );
+      entitled.annual = Math.min(
+        snapshot.annual.entitled + accrued,
+        ANNUAL_LEAVE_LIFETIME_CAP
+      );
+    }
   }
 
   // Monthly WFH for Ladies is a flat "1 per calendar month" allowance, not a
