@@ -329,39 +329,37 @@ export default function Dashboard() {
               key={type}
               className={`bg-white rounded-2xl border border-gray-100 border-l-4 ${
                 CARD_ACCENTS[i % CARD_ACCENTS.length]
-              } ${
-                compact
-                  ? `w-48 p-4 ${type === "compensatory" ? "h-36" : "h-28"}`
-                  : "p-5"
-              } shadow-sm ${
+              } ${compact ? "w-48 h-28 p-4" : "p-5"} shadow-sm ${
                 usedUpThisMonth ? "opacity-50" : ""
               }`}
             >
               <p className="text-sm font-medium text-gray-500 mb-2 whitespace-nowrap">
                 {CARD_LABELS[type] || type}
               </p>
-              <p
-                className={`font-bold text-gray-900 ${
-                  compact ? "text-2xl" : "text-3xl"
-                }`}
-              >
-                {showTaken
-                  ? balance.used[type] ?? 0
-                  : balance.remaining[type] ?? 0}
-              </p>
-              {/* Compensatory Off is the one balance an employee can add to
-                  themselves, so its card carries a way in. Always shown,
-                  including at zero, so a first additional work day can be
-                  recorded. */}
-              {type === "compensatory" && (
-                <button
-                  onClick={() => setShowCompOff(true)}
-                  className="mt-1 text-xs font-semibold text-indigo-600 hover:text-indigo-800"
+              {/* The balance, with Compensatory Off's way in sitting beside
+                  it rather than under it — every card stays the same height.
+                  Always shown, including at zero, so a first additional work
+                  day can be recorded. */}
+              <div className="flex items-baseline justify-between gap-2">
+                <p
+                  className={`font-bold text-gray-900 ${
+                    compact ? "text-2xl" : "text-3xl"
+                  }`}
                 >
-                  Details
-                  {compOff && compOff.pending > 0 ? ` (${compOff.pending} pending)` : ""}
-                </button>
-              )}
+                  {showTaken
+                    ? balance.used[type] ?? 0
+                    : balance.remaining[type] ?? 0}
+                </p>
+                {type === "compensatory" && (
+                  <button
+                    onClick={() => setShowCompOff(true)}
+                    className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 whitespace-nowrap"
+                  >
+                    Details
+                    {compOff && compOff.pending > 0 ? ` (${compOff.pending})` : ""}
+                  </button>
+                )}
+              </div>
             </div>
             );
           };
