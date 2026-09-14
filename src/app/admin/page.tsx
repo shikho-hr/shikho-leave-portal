@@ -272,7 +272,8 @@ export default function AdminDashboard() {
         (filterDept === "all" || e.department === filterDept) &&
         (filterEmpStatus === "all" || e.status === filterEmpStatus) &&
         (e.name.toLowerCase().includes(search.toLowerCase()) ||
-          e.email.toLowerCase().includes(search.toLowerCase()))
+          e.email.toLowerCase().includes(search.toLowerCase()) ||
+          e.id.toLowerCase().includes(search.toLowerCase()))
     )
     .sort((a, b) =>
       a.status === b.status ? 0 : a.status === "inactive" ? 1 : -1
@@ -604,6 +605,9 @@ export default function AdminDashboard() {
               <thead className="bg-indigo-50/50 border-b border-gray-100">
                 <tr>
                   <th className="text-left px-4 py-3 font-semibold text-indigo-900/70">
+                    ID
+                  </th>
+                  <th className="text-left px-4 py-3 font-semibold text-indigo-900/70">
                     Name
                   </th>
                   <th className="text-left px-4 py-3 font-semibold text-indigo-900/70">
@@ -625,7 +629,12 @@ export default function AdminDashboard() {
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {filteredEmployees.map((emp) => (
-                  <tr key={emp.id} className="hover:bg-gray-50/50">
+                  <tr key={emp.email} className="hover:bg-gray-50/50">
+                    <td className="px-4 py-3 font-mono text-xs text-gray-500 whitespace-nowrap">
+                      {/* Employees synced before the sheet ID was persisted
+                          still carry their email as a placeholder id. */}
+                      {emp.id && emp.id !== emp.email ? emp.id : "—"}
+                    </td>
                     <td className="px-4 py-3">
                       <p className="font-medium text-gray-900 flex items-center gap-1.5">
                         {emp.name}

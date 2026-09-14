@@ -355,10 +355,15 @@ export async function upsertEmployeesFromSheet(
           gender: emp.gender || null,
           contractType: emp.contractType,
         };
+        // `id` is the HR employee ID from the sheet's column A ("0001",
+        // "AC0013"…). Rows synced before this was persisted carry the
+        // email as a placeholder id, so a blank sheet value leaves the
+        // existing id alone rather than reverting it.
+        const id = emp.id.trim();
         return prisma.employee.upsert({
           where: { email },
-          create: { email, id: email, role: "employee", ...shared },
-          update: shared,
+          create: { email, id: id || email, role: "employee", ...shared },
+          update: id ? { id, ...shared } : shared,
         });
       })
     );
