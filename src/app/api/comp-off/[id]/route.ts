@@ -66,13 +66,8 @@ export async function PATCH(
     if (status !== "accepted" && status !== "rejected") {
       return NextResponse.json({ error: "Invalid status" }, { status: 400 });
     }
-    // Same rule as rejecting a leave: say why.
-    if (status === "rejected" && !String(comments || "").trim()) {
-      return NextResponse.json(
-        { error: "Please add a comment explaining the rejection." },
-        { status: 400 }
-      );
-    }
+    // Unlike a leave rejection, no comment is required here (HR's call,
+    // 2026-09-14) — a comment is optional either way.
 
     const credit = await getCompOffCreditById(params.id);
     if (!credit)

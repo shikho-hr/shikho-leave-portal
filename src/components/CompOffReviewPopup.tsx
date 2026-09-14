@@ -72,11 +72,6 @@ export default function CompOffReviewPopup({
 
   const decide = async (status: "accepted" | "rejected") => {
     setActionError("");
-    // Same rule as rejecting a leave request: say why.
-    if (status === "rejected" && !comments.trim()) {
-      setActionError("Please add a comment explaining the rejection.");
-      return;
-    }
     setActing(true);
     try {
       const res = await fetch(`/api/comp-off/${creditId}`, {
@@ -181,7 +176,7 @@ export default function CompOffReviewPopup({
                     type="text"
                     value={comments}
                     onChange={(e) => setComments(e.target.value)}
-                    placeholder="Comment (required to reject)"
+                    placeholder="Comment (optional)"
                     className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm mb-3"
                   />
                   {actionError && (
