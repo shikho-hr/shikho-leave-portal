@@ -62,6 +62,13 @@ const TYPE_LABELS: Record<string, string> = {
   wfh_deployment: "WFH - Deployment",
 };
 
+// Balance cards sit under a "General Leave" / "Special Leave" heading, so
+// repeating "Leave" on every card is noise: "Sick", "Annual", "Marriage"…
+// Everything else (history table, filters) keeps the full label.
+const CARD_LABELS: Record<string, string> = Object.fromEntries(
+  Object.entries(TYPE_LABELS).map(([k, v]) => [k, v.replace(/ Leave$/, "")])
+);
+
 // Dates must be picked via the calendar UI, not typed — avoids mm/dd vs
 // dd/mm ambiguity from manual keyboard entry. Tab is still allowed through
 // for keyboard focus navigation.
@@ -306,7 +313,7 @@ export default function Dashboard() {
               }`}
             >
               <p className="text-sm font-medium text-gray-500 mb-2 whitespace-nowrap">
-                {TYPE_LABELS[type] || type}
+                {CARD_LABELS[type] || type}
               </p>
               <p
                 className={`font-bold text-gray-900 ${
