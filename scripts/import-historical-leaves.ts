@@ -1,7 +1,9 @@
 // One-off historical leave import — see prepare-import-data.py (must be run
 // first to produce historical-leaves-clean.json) and
 // .claude/plans/cozy-soaring-mccarthy.md for the full design/rationale.
-// Usage: npx tsx scripts/import-historical-leaves.ts [--commit]
+// Usage: npx tsx scripts/import-historical-leaves.ts [--commit] [--replace]
+//   --replace  delete every existing "HIST-…" leave first (a previous run
+//              of this import) so the file is loaded fresh, not appended.
 import * as fs from "fs";
 import * as path from "path";
 import { prisma } from "../src/lib/prisma";
@@ -28,13 +30,17 @@ function chunk<T>(items: T[], size: number): T[][] {
 
 async function main() {
   const commit = process.argv.includes("--commit");
+  const replace = process.argv.includes("--replace");
   const dataPath = path.join(__dirname, "historical-leaves-clean.json");
+  const existingHist = await prisma.leave.count({ where: { id: { startsWith: "HIST-" } } });
+  console.log(`Existing HIST- leaves in the database: ${existingHist}${replace ? " (will be deleted first)" : ""}`);
   const rows: CleanRow[] = JSON.parse(fs.readFileSync(dataPath, "utf-8"));
 
   const employees = await getEmployees();
   const employeeByEmail = new Map(employees.map((e) => [e.email.toLowerCase(), e]));
 
   const skippedUnmatched: { sourceRow: number; email: string }[] = [];
+  const oddDates: { sourceRow: number; email: string; start: string; end: string; days: number }[] = [];
   const toInsert: {
     id: string;
     employeeEmail: string;
@@ -70,8 +76,19 @@ async function main() {
       // Rare cross-year span — use the same weekday-exclusion split the
       // app itself uses, and let the sum become the authoritative `days`
       // for consistency (overrides the CSV's total in this rare case).
-      daysByYear = splitDaysByYear(row.startDate, row.endDate, "", [], []);
-      days = Object.values(daysByYear).reduce((a, b) => a + b, 0);
+      const split = splitDaysByYear(row.startDate, row.endDate, "", [], []);
+      const splitTotal = Object.values(split).reduce((a, b) => a + b, 0);
+      if (splitTotal > 0 && splitTotal <= 366) {
+        daysByYear = split;
+        days = splitTotal;
+      } else {
+        // A typo'd date in the source (year "0222", end before start, a
+        // multi-year span…) makes the split meaningless — or larger than
+        // the numeric(5,1) column can hold. Keep the sheet's own day count,
+        // attribute it to the start year, and report the row.
+        daysByYear = { [startYear]: days };
+        oddDates.push({ sourceRow: row.sourceRow, email: row.email, start: row.startDate, end: row.endDate, days });
+      }
     }
 
     toInsert.push({
@@ -94,6 +111,10 @@ async function main() {
   console.log(`Skipped (no matching employee): ${skippedUnmatched.length}`);
   const distinctSkippedEmails = new Set(skippedUnmatched.map((s) => s.email));
   console.log(`  distinct unmatched emails: ${distinctSkippedEmails.size}`);
+  if (oddDates.length) {
+    console.log(`Rows with implausible cross-year dates (imported with the sheet's day count, start-year attribution):`);
+    for (const o of oddDates) console.log(`  row ${o.sourceRow} ${o.email} ${o.start} -> ${o.end} days=${o.days}`);
+  }
 
   const skipReportPath = path.join(
     process.cwd(),
@@ -109,6 +130,11 @@ async function main() {
   if (!commit) {
     console.log("\nDry run only — no writes made. Re-run with --commit to import.");
     return;
+  }
+
+  if (replace && existingHist > 0) {
+    const { count } = await prisma.leave.deleteMany({ where: { id: { startsWith: "HIST-" } } });
+    console.log(`Deleted ${count} previous HIST- leaves.`);
   }
 
   console.log(`\nCommitting ${toInsert.length} leave records...`);

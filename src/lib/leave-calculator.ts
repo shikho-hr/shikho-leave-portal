@@ -459,18 +459,37 @@ export function calculateBalance(
 
   const used = calculateUsed(approvedLeaves, targetYear);
 
-  // A historical balance snapshot (one-time CSV import) sets entitled to
-  // the real historical entitlement and adds the historical "taken" on top
-  // of portal usage — so entitled/used both show real numbers (not just an
-  // opaque override that happens to land on the right "remaining") — while
-  // still correctly decreasing only as new leave is approved through the
-  // portal from here on.
+  // A balance snapshot (HR's leave-record sheet, imported by
+  // scripts/import-balance-snapshots.ts) is the authoritative state as of
+  // its import date: `balance` is what the employee actually has left —
+  // including things the formula can't know about, like forfeited days —
+  // so remaining starts from that column, not from entitled - taken.
+  //
+  // The sheet's "taken" already includes every leave that predates it,
+  // which covers all historical rows imported from the old Google Form
+  // (id "HIST-…", never reviewed in the portal, so reviewedOn is blank)
+  // AND anything approved in the portal before the sheet was finalised.
+  // Counting those again on top of the sheet was double-counting every
+  // imported annual leave (found 2026-09-14: 118/126 active employees
+  // showed the wrong annual balance). So only portal approvals dated on or
+  // after the snapshot reduce it from here on.
+  //
+  // `used` is kept consistent with entitled - used = remaining by folding
+  // the sheet's already-consumed portion (entitled - balance) into it.
   if (snapshot) {
+    const snapshotDate = snapshot.importedAt.slice(0, 10);
+    const approvedSinceSnapshot = approvedLeaves.filter(
+      (l) =>
+        !l.id.startsWith("HIST-") &&
+        Boolean(l.reviewedOn) &&
+        l.reviewedOn.slice(0, 10) >= snapshotDate
+    );
+    const usedSinceSnapshot = calculateUsed(approvedSinceSnapshot, targetYear);
     (["sick", "casual", "annual"] as const).forEach((type) => {
       const entry = snapshot[type];
       if (entry) {
         entitled[type] = entry.entitled;
-        used[type] += entry.taken;
+        used[type] = entry.entitled - entry.balance + usedSinceSnapshot[type];
       }
     });
   }
