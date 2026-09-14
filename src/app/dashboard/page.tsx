@@ -145,7 +145,8 @@ const CARD_ACCENTS = [
 // (Marriage, Paternity, etc.) gets its own heading below, computed
 // per-employee inside the component since it depends on gender/type
 // eligibility (see orderedSecondaryTypes).
-const GENERAL_LEAVE_TYPES = ["sick", "casual", "annual"];
+// Display order per HR (2026-09-14): Annual first, then Casual, then Sick.
+const GENERAL_LEAVE_TYPES = ["annual", "casual", "sick"];
 
 // Fixed display order for Special Leave cards — filtered down to whichever
 // types the employee actually has (already gender-scoped via
