@@ -109,14 +109,18 @@ async function main() {
   const takenLeaves: Taken[] = [];
   const skipped: string[] = [];
 
+  // Accept HR's own headers ("Additional Work Date", "Day(s)") as well as
+  // the plain ones documented above.
+  const col = (r: Record<string, string>, ...names: string[]) =>
+    names.map((n) => r[n]).find((v) => v !== undefined && v !== "") ?? "";
   for (const [i, r] of readCsv(creditsCsv).entries()) {
-    const email = (r.email || "").toLowerCase();
-    const workDate = parseDate(r.workdate);
-    const days = Number(r.days);
-    if (!byEmail.has(email)) { skipped.push(`credits row ${i + 2}: no employee "${r.email}"`); continue; }
-    if (!workDate) { skipped.push(`credits row ${i + 2}: bad workDate "${r.workdate}"`); continue; }
+    const email = col(r, "email", "email address").toLowerCase();
+    const workDate = parseDate(col(r, "workdate", "additional work date", "work date"));
+    const days = Number(col(r, "days", "day(s)"));
+    if (!byEmail.has(email)) { skipped.push(`credits row ${i + 2}: no employee "${email}"`); continue; }
+    if (!workDate) { skipped.push(`credits row ${i + 2}: bad workDate "${col(r, "workdate", "additional work date", "work date")}"`); continue; }
     if (days !== 1 && days !== 0.5) { skipped.push(`credits row ${i + 2}: days must be 1 or 0.5, got "${r.days}"`); continue; }
-    credits.push({ email, workDate, days, reason: r.reason || "Pre-portal compensatory off balance" });
+    credits.push({ email, workDate, days, reason: col(r, "reason") || "Pre-portal compensatory off balance" });
   }
 
   if (takenCsv) {

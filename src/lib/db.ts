@@ -1228,18 +1228,32 @@ export async function decideCompOffCredit(
   return count > 0;
 }
 
-// The `explicitDays` half of a comp-off summary: approved comp-off leaves
-// that carried their own work dates, and so brought their own entitlement
-// rather than drawing on the balance.
+// The `explicitDays` half of a comp-off summary: approved comp-off that
+// brought its own entitlement rather than drawing on the balance. Two
+// shapes qualify — a leave that carried its own work dates, and a
+// pre-portal comp-off loaded by the historical import (HIST- id, no work
+// dates on file: the day it was earned was only ever written in the reason
+// text). Neither ever consumed a credit, so both count on the Taken side
+// without touching Remaining. Same HIST- convention calculateBalance uses
+// to keep imported history out of the live balance maths.
+function isSelfEntitledCompOff(l: {
+  id: string;
+  leaveType: string;
+  status: string;
+  extraWorkStartDate?: string;
+  extraWorkEndDate?: string;
+}): boolean {
+  return (
+    l.leaveType === "compensatory" &&
+    l.status === "approved" &&
+    (Boolean(l.extraWorkStartDate && l.extraWorkEndDate) ||
+      l.id.startsWith("HIST-"))
+  );
+}
+
 function explicitCompOffDays(leaves: LeaveRequest[]): number {
   return leaves
-    .filter(
-      (l) =>
-        l.leaveType === "compensatory" &&
-        l.status === "approved" &&
-        l.extraWorkStartDate &&
-        l.extraWorkEndDate
-    )
+    .filter(isSelfEntitledCompOff)
     .reduce((sum, l) => sum + l.days, 0);
 }
 
@@ -1270,7 +1284,11 @@ export async function getCompOffSummaries(
         employeeEmail: { in: lowered },
         leaveType: "compensatory",
         status: "approved",
-        NOT: { extraWorkStartDate: null },
+        // Mirrors isSelfEntitledCompOff: own work dates, or imported history.
+        OR: [
+          { NOT: { extraWorkStartDate: null } },
+          { id: { startsWith: "HIST-" } },
+        ],
       },
       select: { employeeEmail: true, days: true },
     }),

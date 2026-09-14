@@ -63,6 +63,7 @@ LEAVE_TYPE_MAP = {
     "paternity leave": "paternity",
     "sick leave": "sick",
     "casual leave": "casual",
+    "compensatory off": "compensatory",
 }
 
 # "Leave Duration" column -> the app's halfDayPeriod values.
