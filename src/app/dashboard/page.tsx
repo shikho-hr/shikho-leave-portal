@@ -161,6 +161,12 @@ const SPECIAL_LEAVE_ORDER = [
   "maternity",
 ];
 
+// Special Leave types that get no balance card (HR, 2026-09-14: Marriage is
+// a one-off entitlement, not a balance to watch). They stay applicable and
+// still show in "My Leave Requests" and the taken-history panel — only the
+// card is dropped.
+const HIDDEN_SPECIAL_LEAVE_CARDS = ["marriage"];
+
 // Years to offer in the history dropdown — derived from years the employee
 // actually has approved records in (across whichever leave types the
 // history panel currently covers), not a fixed lookback window, so it
@@ -291,10 +297,14 @@ export default function Dashboard() {
             ...SPECIAL_LEAVE_ORDER.filter((t) => secondaryTypes.includes(t)),
             ...secondaryTypes.filter((t) => !SPECIAL_LEAVE_ORDER.includes(t)),
           ];
+          // Cards only — the history panel below keeps the full set.
+          const specialLeaveCardTypes = orderedSecondaryTypes.filter(
+            (t) => !HIDDEN_SPECIAL_LEAVE_CARDS.includes(t)
+          );
           // Taken tab's Special Leave sits in the narrower General Leave
           // column, so it splits at 3-per-row instead of one long row.
-          const specialLeaveRow1 = orderedSecondaryTypes.slice(0, 3);
-          const specialLeaveRow2 = orderedSecondaryTypes.slice(3);
+          const specialLeaveRow1 = specialLeaveCardTypes.slice(0, 3);
+          const specialLeaveRow2 = specialLeaveCardTypes.slice(3);
           // Every type with a Taken-tab card, in card order — the history
           // panel's "All Leaves" and Type dropdown cover exactly this set,
           // so anything shown as "taken" up top can be found in the table.
@@ -405,7 +415,7 @@ export default function Dashboard() {
                       Special Leave
                     </h3>
                     <div className="flex flex-wrap gap-4">
-                      {orderedSecondaryTypes.map((type, i) => renderCard(type, i, true))}
+                      {specialLeaveCardTypes.map((type, i) => renderCard(type, i, true))}
                     </div>
                   </div>
                 )}
