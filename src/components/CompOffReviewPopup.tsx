@@ -176,7 +176,7 @@ export default function CompOffReviewPopup({
                     type="text"
                     value={comments}
                     onChange={(e) => setComments(e.target.value)}
-                    placeholder="Comment (optional)"
+                    placeholder="Comment"
                     className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm mb-3"
                   />
                   {actionError && (
