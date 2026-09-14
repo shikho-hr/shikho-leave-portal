@@ -356,7 +356,7 @@ export default function Dashboard() {
                     // relative/top nudges it below the number's baseline
                     // without changing the row's height, so the card stays
                     // exactly as tall as the others.
-                    className="relative top-2 text-xs font-semibold text-indigo-600 hover:text-indigo-800 whitespace-nowrap"
+                    className="relative top-4 text-xs font-semibold text-indigo-600 hover:text-indigo-800 whitespace-nowrap"
                   >
                     Details
                     {compOff && compOff.pending > 0 ? ` (${compOff.pending})` : ""}
