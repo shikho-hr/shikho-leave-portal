@@ -136,7 +136,7 @@ export default function CompOffPopup({
           height: "clamp(320px, 52vh, 680px)",
         }}
       >
-        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 flex-none">
+        <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100 flex-none">
           <h2 className="font-semibold text-gray-900">
             Compensatory Off
             {summary && (
@@ -145,13 +145,29 @@ export default function CompOffPopup({
               </span>
             )}
           </h2>
-          <button
-            onClick={onClose}
-            aria-label="Close"
-            className="text-gray-400 hover:text-gray-700 text-xl leading-none w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-50"
-          >
-            &times;
-          </button>
+          <div className="flex items-center gap-3">
+            {/* Lives in the header (user's choice) so it's reachable
+                without scrolling past a long balance table. Hidden while
+                the form is open — the form carries its own Cancel. */}
+            {!loading && !error && !recording && (
+              <button
+                onClick={() => {
+                  setRecording(true);
+                  setSuccess("");
+                }}
+                className="bg-indigo-600 text-white text-xs font-semibold px-3 py-1.5 rounded-xl hover:bg-indigo-700 whitespace-nowrap"
+              >
+                Record Additional Work Day
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              aria-label="Close"
+              className="text-gray-400 hover:text-gray-700 text-xl leading-none w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-50"
+            >
+              &times;
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4">
@@ -169,8 +185,9 @@ export default function CompOffPopup({
 
               {credits.length === 0 ? (
                 <p className="text-sm text-gray-400">
-                  You have no additional work days recorded yet. Record one
-                  below and your manager will be asked to approve it.
+                  You have no additional work days recorded yet. Use Record
+                  Additional Work Day above and your manager will be asked to
+                  approve it.
                 </p>
               ) : (
                 <table className="w-full text-sm">
@@ -278,17 +295,7 @@ export default function CompOffPopup({
                     </button>
                   </div>
                 </div>
-              ) : (
-                <button
-                  onClick={() => {
-                    setRecording(true);
-                    setSuccess("");
-                  }}
-                  className="mt-4 bg-indigo-600 text-white text-sm font-semibold px-4 py-2 rounded-xl hover:bg-indigo-700"
-                >
-                  Record Additional Work Day
-                </button>
-              )}
+              ) : null}
             </>
           )}
         </div>
