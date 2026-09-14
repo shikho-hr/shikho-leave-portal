@@ -3,7 +3,8 @@
 // emails. Idempotent per (email, type, date). Refreshes the admin balance cache.
 //
 // Usage (staging):
-//   LEAVE_EMAIL=x@shikho.com LEAVE_DATE=2026-09-14 LEAVE_TYPE=sick REVIEWED_ON=2026-09-14 \n//     npx tsx --env-file=.env.local scripts/record-approved-leave.ts
+//   LEAVE_EMAIL=x@shikho.com LEAVE_DATE=2026-09-14 LEAVE_TYPE=sick REVIEWED_ON=2026-09-14 \
+//     npx tsx --env-file=.env.local scripts/record-approved-leave.ts
 // Prefix DATABASE_URL="<prod pooled url>" to target production.
 //
 // REVIEWED_ON decides whether it reduces the balance: a date on/after the
