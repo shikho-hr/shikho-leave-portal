@@ -28,6 +28,7 @@ import {
   calculateBalance,
 } from "./leave-calculator";
 import { sendMail } from "./mailer";
+import { SYSTEM_ADMIN_EMAIL, isSystemAdmin } from "./system-admin";
 
 // ── Date/decimal <-> plain-object conversion helpers ────────────
 // The app talks in plain strings/numbers throughout (ISO date strings,
@@ -269,8 +270,42 @@ function chunk<T>(items: T[], size: number): T[][] {
 // current caller is the admin-only /api/employees route, which needs to
 // show inactive employees too.
 export async function getEmployees(): Promise<Employee[]> {
-  const rows = await prisma.employee.findMany();
+  // The system admin (hr.portal@) is a service account, not staff — keep it
+  // out of every employee listing (Team Details, balances cache, analytics,
+  // Role Assigner, import scripts). It still resolves via getEmployeeByEmail
+  // for sign-in. See system-admin.ts.
+  const rows = await prisma.employee.findMany({
+    where: { email: { not: SYSTEM_ADMIN_EMAIL } },
+  });
   return rows.map(rowToEmployee);
+}
+
+// Guarantees the HR automation account exists as an active admin. Called on
+// every sign-in of that account (session route + getCurrentUser), so a
+// deleted, deactivated or demoted row is silently restored — this is what
+// makes the account "undeletable". Fields other than role/status are only
+// placeholders; nothing computes a balance for this row (getEmployees
+// excludes it) and it cannot apply for leave (see /api/leaves POST).
+export async function ensureSystemAdmin(): Promise<void> {
+  const placeholder = {
+    name: "HR Portal",
+    designation: "System Administrator",
+    department: "Human Resources",
+    employeeType: "non-tele-sales",
+    contractType: "full-time",
+    joiningDate: new Date("2026-09-14"),
+  };
+  await prisma.employee.upsert({
+    where: { email: SYSTEM_ADMIN_EMAIL },
+    create: {
+      email: SYSTEM_ADMIN_EMAIL,
+      id: "HR-PORTAL",
+      role: "admin",
+      status: "active",
+      ...placeholder,
+    },
+    update: { role: "admin", status: "active" },
+  });
 }
 
 export async function getEmployeeByEmail(
@@ -339,6 +374,9 @@ export async function getEmployeesByManager(
 export async function upsertEmployeesFromSheet(
   employees: Employee[]
 ): Promise<void> {
+  // A sheet row for the system admin account must never override its
+  // forced role/status (or turn it into "staff") — drop it up front.
+  employees = employees.filter((emp) => !isSystemAdmin(emp.email));
   for (const batch of chunk(employees, 200)) {
     await Promise.all(
       batch.map((emp) => {
@@ -389,6 +427,9 @@ export async function updateEmployeeRole(
   email: string,
   role: Role
 ): Promise<void> {
+  if (isSystemAdmin(email)) {
+    throw new Error("The HR Portal system admin's role cannot be changed.");
+  }
   await prisma.employee.update({
     where: { email: email.toLowerCase() },
     data: { role },
@@ -930,8 +971,10 @@ async function notifyRecipients(
 
   // No status filter here, deliberately — matches prior behavior exactly
   // (every employee with role "admin" is notified, active or not).
+  // The system admin (hr.portal@) is also the mailbox these emails are SENT
+  // from — notifying it would just mail itself, so it's left out.
   const admins = await prisma.employee.findMany({
-    where: { role: "admin" },
+    where: { role: "admin", email: { not: SYSTEM_ADMIN_EMAIL } },
     select: { email: true },
   });
   const adminEmails = new Set(admins.map((a) => a.email.toLowerCase()));

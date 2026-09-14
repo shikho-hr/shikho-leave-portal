@@ -1,6 +1,7 @@
 "use client";
 
 import { useAuth } from "@/lib/AuthContext";
+import { isSystemAdmin, SYSTEM_ADMIN_HOME } from "@/lib/system-admin";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 
@@ -9,7 +10,8 @@ export default function LoginPage() {
   const router = useRouter();
 
   useEffect(() => {
-    if (user) router.replace("/dashboard");
+    if (user)
+      router.replace(isSystemAdmin(user.email) ? SYSTEM_ADMIN_HOME : "/dashboard");
   }, [user, router]);
 
   if (status === "loading") {

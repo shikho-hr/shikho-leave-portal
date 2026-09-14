@@ -5,14 +5,19 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import NotificationBell from "./NotificationBell";
+import { isSystemAdmin, SYSTEM_ADMIN_HOME } from "@/lib/system-admin";
 
 export default function Navbar() {
   const { user, signOutUser } = useAuth();
   const pathname = usePathname();
   const role = user?.role;
+  // The HR automation account only ever sees Team Details — no other links,
+  // no pending-approvals badge, no notification bell (see system-admin.ts).
+  const systemAdmin = isSystemAdmin(user?.email);
   const [pendingCount, setPendingCount] = useState(0);
 
   useEffect(() => {
+    if (systemAdmin) return;
     if (role !== "manager" && role !== "admin") return;
 
     const fetchPendingCount = () => {
@@ -43,11 +48,13 @@ export default function Navbar() {
     window.addEventListener("leave-request-updated", fetchPendingCount);
     return () =>
       window.removeEventListener("leave-request-updated", fetchPendingCount);
-  }, [role]);
+  }, [role, systemAdmin]);
 
   const pendingCountLabel = pendingCount >= 10 ? "9+" : String(pendingCount);
 
-  const links = [
+  const links = systemAdmin
+    ? [{ href: SYSTEM_ADMIN_HOME, label: "Team Details" }]
+    : [
     { href: "/dashboard", label: "Dashboard" },
     ...(role === "manager" || role === "admin"
       ? [
@@ -68,13 +75,15 @@ export default function Navbar() {
     ...(role === "admin" ? [{ href: "/analytics", label: "Analytics" }] : []),
   ];
 
+  const homeHref = systemAdmin ? SYSTEM_ADMIN_HOME : "/dashboard";
+
   return (
     <nav className="bg-indigo-600 sticky top-0 z-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between h-14 items-center">
           <div className="flex items-center gap-8">
             <Link
-              href="/dashboard"
+              href={homeHref}
               className="flex items-center gap-2 text-white"
             >
               <div className="w-9 h-9 bg-white rounded-xl flex items-center justify-center p-1.5">
@@ -107,7 +116,7 @@ export default function Navbar() {
           </div>
 
           <div className="flex items-center gap-3">
-            {user?.email && (
+            {user?.email && !systemAdmin && (
               <NotificationBell currentUserEmail={user.email} />
             )}
             <span className="text-sm text-indigo-200 hidden sm:block">

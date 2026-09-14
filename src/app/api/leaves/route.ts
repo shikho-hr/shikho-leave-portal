@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
+import { isSystemAdmin } from "@/lib/system-admin";
 import {
   getLeavesByEmployee,
   getLeavesByEmployees,
@@ -88,6 +89,12 @@ export async function POST(req: NextRequest) {
   const user = await getCurrentUser();
   if (!user)
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // The HR automation account isn't staff and has no balance to draw on.
+  if (isSystemAdmin(user.email))
+    return NextResponse.json(
+      { error: "The HR Portal system admin cannot apply for leave." },
+      { status: 403 }
+    );
 
   try {
     const body = await req.json();

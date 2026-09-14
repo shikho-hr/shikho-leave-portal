@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { adminAuth } from "@/lib/firebase-admin";
-import { getEmployeeByEmail } from "@/lib/db";
+import { getEmployeeByEmail, ensureSystemAdmin } from "@/lib/db";
+import { isSystemAdmin } from "@/lib/system-admin";
 
 const SESSION_EXPIRES_IN = 14 * 24 * 60 * 60 * 1000; // 14 days
 
@@ -16,6 +17,10 @@ export async function POST(req: NextRequest) {
     if (!decoded.email) {
       return NextResponse.json({ error: "No email on account" }, { status: 400 });
     }
+
+    // Permanent admin account: (re)create its row before the lookup so it
+    // can always sign in — see system-admin.ts.
+    if (isSystemAdmin(decoded.email)) await ensureSystemAdmin();
 
     const employee = await getEmployeeByEmail(decoded.email);
     if (!employee || employee.status !== "active") {

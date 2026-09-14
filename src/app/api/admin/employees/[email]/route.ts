@@ -6,6 +6,7 @@ import {
   setProbationAnnualLeaveApproval,
 } from "@/lib/db";
 import { isOnProbation } from "@/lib/leave-calculator";
+import { isSystemAdmin } from "@/lib/system-admin";
 import { Role } from "@/lib/types";
 
 const ROLES: Role[] = ["employee", "manager", "admin"];
@@ -32,6 +33,12 @@ export async function PATCH(
       if (!ROLES.includes(body.role)) {
         return NextResponse.json(
           { error: `Invalid role "${body.role}"` },
+          { status: 400 }
+        );
+      }
+      if (isSystemAdmin(email)) {
+        return NextResponse.json(
+          { error: "The HR Portal system admin's role cannot be changed." },
           { status: 400 }
         );
       }
