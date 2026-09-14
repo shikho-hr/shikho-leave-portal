@@ -589,7 +589,7 @@ export default function Dashboard() {
             <table className="w-full text-sm">
               <thead className="bg-indigo-50/50 border-b border-gray-100">
                 <tr>
-                  <th className="text-center px-4 py-3 font-semibold text-indigo-900/70">
+                  <th className="text-left px-4 py-3 font-semibold text-indigo-900/70">
                     Type
                   </th>
                   <th className="text-center px-4 py-3 font-semibold text-indigo-900/70">
@@ -633,7 +633,7 @@ export default function Dashboard() {
                     return (
                     <Fragment key={leave.id}>
                       <tr className="hover:bg-gray-50/50 text-center">
-                        <td className="px-4 py-3 font-medium">
+                        <td className="px-4 py-3 font-medium text-left">
                           {TYPE_LABELS[leave.leaveType] || leave.leaveType}
                           {leave.halfDayPeriod && (
                             <span className="block text-xs font-normal text-gray-400">
