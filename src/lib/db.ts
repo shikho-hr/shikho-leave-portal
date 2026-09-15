@@ -29,6 +29,7 @@ import {
 } from "./ids";
 import {
   LEAVE_TYPE_LABELS,
+  WFH_LEAVE_TYPES,
   formatDateRange,
   calculateBalance,
 } from "./leave-calculator";
@@ -1073,8 +1074,10 @@ async function notifyRecipients(
   const buttonLabel = "Review in Leave Portal";
 
   // Every notification uses the same subject so mail clients group them as
-  // one conversation alongside the Message-ID threading below.
-  const subject = `[Leave/WFH] ${leave.employeeName}`;
+  // one conversation alongside the Message-ID threading below. "WFH" for
+  // the three work-from-home arrangements, "Leave" for everything else.
+  const subjectPrefix = WFH_LEAVE_TYPES.includes(leave.leaveType) ? "WFH" : "Leave";
+  const subject = `[${subjectPrefix}] ${leave.employeeName}`;
 
   // Emails are addressed to one person even though everyone with a stake
   // receives a copy: the manager for anything that needs their review, the

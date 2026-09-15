@@ -49,6 +49,14 @@ export const LEAVE_TYPE_LABELS: Record<LeaveType, string> = {
   wfh_deployment: "WFH - Deployment",
 };
 
+// The three types that are a WFH arrangement rather than time away — used
+// to split "[Leave]" vs "[WFH]" in notification subject lines.
+export const WFH_LEAVE_TYPES: LeaveType[] = [
+  "wfh",
+  "ladies_wfh",
+  "wfh_deployment",
+];
+
 export const HALF_DAY_ELIGIBLE_TYPES: LeaveType[] = [
   "sick",
   "casual",
