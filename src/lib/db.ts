@@ -1077,7 +1077,7 @@ async function notifyRecipients(
   // one conversation alongside the Message-ID threading below. "WFH" for
   // the three work-from-home arrangements, "Leave" for everything else.
   const subjectPrefix = WFH_LEAVE_TYPES.includes(leave.leaveType) ? "WFH" : "Leave";
-  const subject = `[${subjectPrefix}] ${leave.employeeName}`;
+  const subject = `[${subjectPrefix}] ${leave.employeeName} - ${typeLabel}`;
 
   // Emails are addressed to one person even though everyone with a stake
   // receives a copy: the manager for anything that needs their review, the
