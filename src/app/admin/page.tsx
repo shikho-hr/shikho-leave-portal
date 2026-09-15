@@ -441,16 +441,18 @@ export default function AdminDashboard() {
           >
             All Requests
           </button>
-          <button
-            onClick={() => setTab("calendar")}
-            className={`px-5 py-2 rounded-xl text-sm font-semibold transition-colors ${
-              tab === "calendar"
-                ? "bg-indigo-600 text-white shadow-sm"
-                : "bg-white text-gray-600 border border-gray-200 hover:border-indigo-300"
-            }`}
-          >
-            Company Calendar
-          </button>
+          {user?.role === "admin" && (
+            <button
+              onClick={() => setTab("calendar")}
+              className={`px-5 py-2 rounded-xl text-sm font-semibold transition-colors ${
+                tab === "calendar"
+                  ? "bg-indigo-600 text-white shadow-sm"
+                  : "bg-white text-gray-600 border border-gray-200 hover:border-indigo-300"
+              }`}
+            >
+              Company Calendar
+            </button>
+          )}
           {user?.role === "admin" && (
             <button
               onClick={() => setTab("roles")}
