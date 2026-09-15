@@ -157,7 +157,7 @@ export default function CompOffPopup({
                 }}
                 className="bg-indigo-600 text-white text-xs font-semibold px-3 py-1.5 rounded-xl hover:bg-indigo-700 whitespace-nowrap"
               >
-                Record Additional Work Day
+                + Add Extra Work day
               </button>
             )}
             <button
