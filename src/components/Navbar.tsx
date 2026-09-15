@@ -70,9 +70,8 @@ export default function Navbar() {
     ...(role === "manager" || role === "admin"
       ? [{ href: "/admin", label: "Team Details" }]
       : []),
-    // Admin-only, unlike the manager-visible entries above — the analytics
-    // view spans every department.
-    ...(role === "admin" ? [{ href: "/analytics", label: "Analytics" }] : []),
+    // Analytics nav link pulled 2026-09-15 — page stays in place, still
+    // reachable by URL, but isn't linked from the nav until it's finished.
   ];
 
   const homeHref = systemAdmin ? SYSTEM_ADMIN_HOME : "/dashboard";
