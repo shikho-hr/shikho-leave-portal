@@ -1090,7 +1090,9 @@ async function notifyRecipients(
     : undefined;
   const reviewerGreeting = `Hi ${managerName || "HR"},`;
   const employeeGreeting = `Hi ${leave.employeeName},`;
-  const requestRef = `${typeLabel} request (${dateRange}, ${daysLabel})`;
+  // The trailing half of the "{type} request (...)" phrase that appears in
+  // prose below — split off so the type name itself can be bolded.
+  const requestSuffix = ` request (${dateRange}, ${daysLabel})`;
 
   let content: EmailContent;
   if (isSubmission) {
@@ -1109,9 +1111,13 @@ async function notifyRecipients(
     const rejectedBy = leave.rejectedByRole === "admin" ? "HR" : "Manager";
     content = {
       greeting: employeeGreeting,
-      intro: `Your ${requestRef} was not approved.`,
+      intro: [
+        { text: "Your " },
+        { text: typeLabel, bold: true },
+        { text: `${requestSuffix} was not approved.` },
+      ],
       quote: {
-        heading: `Rejected by: ${rejectedBy}`,
+        heading: [{ text: "Rejected by:", bold: true }, { text: ` ${rejectedBy}` }],
         label: "Remarks:",
         text: leave.reviewerComments || "",
       },
@@ -1123,7 +1129,11 @@ async function notifyRecipients(
     // question from the reviewer, so it's the reviewer's turn again.
     content = {
       greeting: reviewerGreeting,
-      intro: `${leave.employeeName} has replied on their ${requestRef}.`,
+      intro: [
+        { text: `${leave.employeeName} has replied on their ` },
+        { text: typeLabel, bold: true },
+        { text: `${requestSuffix}.` },
+      ],
       quote: { label: `${leave.employeeName} commented:`, text: commentText },
       buttonLabel,
       link,
@@ -1136,7 +1146,11 @@ async function notifyRecipients(
     const authorRole = author?.role === "admin" ? "HR" : "Manager";
     content = {
       greeting: employeeGreeting,
-      intro: `${authorName} has a question on your ${requestRef} before it can move forward.`,
+      intro: [
+        { text: `${authorName} has a question on your ` },
+        { text: typeLabel, bold: true },
+        { text: `${requestSuffix} before it can move forward.` },
+      ],
       quote: { label: `${authorRole} commented:`, text: commentText },
       buttonLabel,
       link,
