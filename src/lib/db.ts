@@ -944,7 +944,28 @@ export async function getCommentsByLeave(
     where: { leaveId },
     orderBy: { createdAt: "asc" },
   });
-  return rows.map(rowToComment);
+  const comments = rows.map(rowToComment);
+
+  // The reason typed at submission is auto-added as this leave's first
+  // comment (see addComment's isSubmission param) purely so it can flow
+  // through the same notifyRecipients() email path as a real comment.
+  // It's already shown as its own "Reason" field everywhere a leave is
+  // displayed, so surfacing it a second time here would just be the same
+  // text twice — drop it from the thread itself, at the one place every
+  // comment-thread UI reads from.
+  const first = comments[0];
+  if (first) {
+    const leave = await getLeaveById(leaveId);
+    if (
+      leave &&
+      first.comment === leave.reason &&
+      first.authorEmail.toLowerCase() === leave.employeeEmail.toLowerCase()
+    ) {
+      comments.shift();
+    }
+  }
+
+  return comments;
 }
 
 export async function addComment(
