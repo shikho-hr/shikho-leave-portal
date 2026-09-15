@@ -95,7 +95,7 @@ export const REASON_OPTIONAL_TYPES: LeaveType[] = [
 ];
 
 // Applies only where reason is already mandatory (i.e. not in REASON_OPTIONAL_TYPES).
-export const MIN_REASON_LENGTH = 60;
+export const MIN_REASON_LENGTH = 40;
 
 export const MATERNITY_PATERNITY_LIFETIME_CAP = 2;
 export const MARRIAGE_MAX_DAYS = 7;
