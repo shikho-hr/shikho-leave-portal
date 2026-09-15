@@ -29,11 +29,11 @@ import {
 } from "./ids";
 import {
   LEAVE_TYPE_LABELS,
-  formatDate,
   formatDateRange,
   calculateBalance,
 } from "./leave-calculator";
 import { sendMail } from "./mailer";
+import { renderEmail, type EmailContent } from "./email-templates";
 import { SYSTEM_ADMIN_EMAIL, isSystemAdmin } from "./system-admin";
 import {
   planFifoConsumption,
@@ -1062,38 +1062,84 @@ async function notifyRecipients(
     });
   }
 
-  if (suppressEmail) return;
+  // Internal notes are bell-only: they're a Manager/HR-side scratchpad,
+  // not something that needs to land in anyone's inbox.
+  if (suppressEmail || isInternalNote) return;
 
   const typeLabel = LEAVE_TYPE_LABELS[leave.leaveType] || leave.leaveType;
   const dateRange = formatDateRange(leave.startDate, leave.endDate);
+  const daysLabel = leave.days === 1 ? "1 day" : `${leave.days} days`;
   const link = `${process.env.APP_BASE_URL || ""}/dashboard`;
-  const viewLine = `View in the Leave Portal: ${link}`;
-  const viewLineHtml = `<p><a href="${link}">View in the Leave Portal</a></p>`;
+  const buttonLabel = "Review in Leave Portal";
 
   // Every notification uses the same subject so mail clients group them as
   // one conversation alongside the Message-ID threading below.
-  const subject = `[Leave] ${leave.employeeName}`;
-  const rejectedByLabel =
-    leave.rejectedByRole === "admin" ? "HR" : "the Manager";
+  const subject = `[Leave/WFH] ${leave.employeeName}`;
 
-  let text: string;
-  let html: string;
+  // Emails are addressed to one person even though everyone with a stake
+  // receives a copy: the manager for anything that needs their review, the
+  // employee for anything about their own request. An employee with no
+  // manager on file is reviewed by HR directly, so HR gets the greeting.
+  const managerName = employee?.managerEmail
+    ? (await getEmployeeNamesByEmails([employee.managerEmail])).get(
+        employee.managerEmail.toLowerCase()
+      )
+    : undefined;
+  const reviewerGreeting = `Hi ${managerName || "HR"},`;
+  const employeeGreeting = `Hi ${leave.employeeName},`;
+  const requestRef = `${typeLabel} request (${dateRange}, ${daysLabel})`;
+
+  let content: EmailContent;
   if (isSubmission) {
-    text = `${leave.employeeName} has submitted a new ${typeLabel} application for ${dateRange} - ${leave.days} day(s).\nReason: ${commentText}\n\n${viewLine}`;
-    html = `<p>${leave.employeeName} has submitted a new ${typeLabel} application for ${dateRange} - ${leave.days} day(s).</p><p>Reason: ${commentText}</p>${viewLineHtml}`;
+    content = {
+      greeting: reviewerGreeting,
+      intro: `${leave.employeeName} has requested leave and it's awaiting your review.`,
+      details: [
+        { label: "Leave Type:", value: typeLabel },
+        { label: "Dates:", value: `${dateRange} (${daysLabel})` },
+        { label: "Reason:", value: `"${commentText}"` },
+      ],
+      buttonLabel,
+      link,
+    };
   } else if (isRejection) {
-    text = `This ${typeLabel} application from ${leave.employeeName} (${dateRange}) has been rejected by ${rejectedByLabel}.\nComment: ${leave.reviewerComments}\n\n${viewLine}`;
-    html = `<p>This ${typeLabel} application from ${leave.employeeName} (${dateRange}) has been rejected by ${rejectedByLabel}.</p><p>Comment: ${leave.reviewerComments}</p>${viewLineHtml}`;
-  } else if (isInternalNote) {
-    // Deliberately generic "Manager/HR" rather than the actual author's
-    // name — internal notes are meant to read as a note from the
-    // reviewing side in general, not attributed to one specific person.
-    text = `Manager/HR has added an internal note on ${leave.employeeName}'s ${typeLabel} application (${dateRange}).\n"${commentText}"\n\n${viewLine}`;
-    html = `<p>Manager/HR has added an internal note on ${leave.employeeName}'s ${typeLabel} application (${dateRange}).</p><p>"${commentText}"</p>${viewLineHtml}`;
+    const rejectedBy = leave.rejectedByRole === "admin" ? "HR" : "Manager";
+    content = {
+      greeting: employeeGreeting,
+      intro: `Your ${requestRef} was not approved.`,
+      quote: {
+        heading: `Rejected by: ${rejectedBy}`,
+        label: "Remarks:",
+        text: leave.reviewerComments || "",
+      },
+      buttonLabel,
+      link,
+    };
+  } else if (authorEmail.toLowerCase() === leave.employeeEmail.toLowerCase()) {
+    // The employee replying on their own request — usually answering a
+    // question from the reviewer, so it's the reviewer's turn again.
+    content = {
+      greeting: reviewerGreeting,
+      intro: `${leave.employeeName} has replied on their ${requestRef}.`,
+      quote: { label: `${leave.employeeName} commented:`, text: commentText },
+      buttonLabel,
+      link,
+    };
   } else {
-    text = `${authorName} has added a comment on ${leave.employeeName}'s ${typeLabel} application (${dateRange}).\n"${commentText}"\n\n${viewLine}`;
-    html = `<p>${authorName} has added a comment on ${leave.employeeName}'s ${typeLabel} application (${dateRange}).</p><p>"${commentText}"</p>${viewLineHtml}`;
+    // Manager or HR asking the employee something before deciding. The
+    // quote is labelled by role rather than name so the employee knows
+    // which stage the question is coming from.
+    const author = await getEmployeeByEmail(authorEmail);
+    const authorRole = author?.role === "admin" ? "HR" : "Manager";
+    content = {
+      greeting: employeeGreeting,
+      intro: `${authorName} has a question on your ${requestRef} before it can move forward.`,
+      quote: { label: `${authorRole} commented:`, text: commentText },
+      buttonLabel,
+      link,
+    };
   }
+  const { html, text } = renderEmail(content);
 
   // Every email about this leave shares one root Message-ID so mail clients
   // thread them into a single conversation. The submission email originates
@@ -1393,10 +1439,15 @@ export async function approveWithCompOffConsumption(
   });
 }
 
-// In-app + email fan-out for a comp-off credit. Deliberately a sibling of
-// notifyRecipients rather than a parameter on it: that one is leave-shaped
-// all the way through (it loads a Leave, builds a date range, threads the
-// email by leave id), and bending it would make both harder to follow.
+// In-app fan-out for a comp-off credit — bell notifications only. Neither
+// the request (recording a worked day) nor the decision (accepted/
+// rejected) emails; only a *leave application* of type "compensatory"
+// (via notifyRecipients, the normal leave-application flow) does — see
+// project_leave_comp_off_balance: two coexisting comp-off flows, and only
+// the leave-application one is meant to email (2026-09-15). Deliberately
+// a sibling of notifyRecipients rather than a parameter on it: that one
+// is leave-shaped all the way through, and bending it would make both
+// harder to follow.
 async function notifyCompOffRecipients(
   creditId: string,
   kind: Extract<NotificationKind, "comp_off_request" | "comp_off_decision">,
@@ -1412,7 +1463,7 @@ async function notifyCompOffRecipients(
   const recipients = new Set<string>();
   if (kind === "comp_off_request") {
     // Whoever can act on it: the line manager, plus HR admins (minus the
-    // automation account, which is the mailbox these are sent from).
+    // system automation account).
     if (employee.managerEmail) recipients.add(employee.managerEmail.toLowerCase());
     const admins = await prisma.employee.findMany({
       where: { role: "admin", email: { not: SYSTEM_ADMIN_EMAIL } },
@@ -1423,42 +1474,26 @@ async function notifyCompOffRecipients(
     recipients.add(employee.email.toLowerCase());
   }
 
-  const emailRecipients = Array.from(recipients);
-  // Same rule as notifyRecipients: the actor still gets the email but never
-  // an in-app bell entry for their own action.
+  // Nobody needs a bell entry for their own action.
   recipients.delete(actorEmail.toLowerCase());
+  if (recipients.size === 0) return;
 
-  if (recipients.size > 0) {
-    await prisma.notification.createMany({
-      data: Array.from(recipients).map((recipientEmail) => ({
-        id: generateNotificationId(),
-        recipientEmail,
-        kind,
-        creditId,
-        leaveId: null,
-        leaveType: "compensatory",
-        employeeName: employee.name,
-        commentAuthorName: actorName,
-        commentPreview: message.slice(0, 140),
-        isInternalNote: false,
-        isSubmission: false,
-        read: false,
-        createdAt: new Date(),
-      })),
-    });
-  }
-
-  if (emailRecipients.length === 0) return;
-  const link = `${process.env.APP_BASE_URL || ""}/dashboard`;
-  const subject = `[Compensatory Off] ${employee.name}`;
-  const text = `${message}\n\nWork date: ${formatDate(credit.workDate)} — ${credit.days} day(s)\nReason: ${credit.reason}\n\nView it here: ${link}`;
-  const html = `<p>${message}</p><p><b>Work date:</b> ${formatDate(credit.workDate)} — ${credit.days} day(s)<br/><b>Reason:</b> ${credit.reason}</p><p><a href="${link}">View it here</a></p>`;
-  await sendMail({
-    to: emailRecipients,
-    subject,
-    html,
-    text,
-    messageId: `<compoff-${creditId}@shikho.com>`,
+  await prisma.notification.createMany({
+    data: Array.from(recipients).map((recipientEmail) => ({
+      id: generateNotificationId(),
+      recipientEmail,
+      kind,
+      creditId,
+      leaveId: null,
+      leaveType: "compensatory",
+      employeeName: employee.name,
+      commentAuthorName: actorName,
+      commentPreview: message.slice(0, 140),
+      isInternalNote: false,
+      isSubmission: false,
+      read: false,
+      createdAt: new Date(),
+    })),
   });
 }
 
