@@ -5,6 +5,9 @@ import { Providers } from "@/components/Providers";
 export const metadata: Metadata = {
   title: "Shikho Leave Portal",
   description: "Leave application and management portal",
+  icons: {
+    icon: "/shikho-bird.png",
+  },
 };
 
 export default function RootLayout({
