@@ -36,7 +36,25 @@ export async function GET(req: NextRequest) {
   }
 
   const format = req.nextUrl.searchParams.get("format") === "xlsx" ? "xlsx" : "csv";
-  const leaves = await getLeaveRequests();
+  const status = req.nextUrl.searchParams.get("status") || "all";
+  const leaveType = req.nextUrl.searchParams.get("leaveType") || "all";
+  const dateFrom = req.nextUrl.searchParams.get("dateFrom") || "";
+  const dateTo = req.nextUrl.searchParams.get("dateTo") || "";
+  const search = (req.nextUrl.searchParams.get("search") || "").toLowerCase();
+
+  const allLeaves = await getLeaveRequests();
+  // Same predicate as the All Requests table on Team Details, so an
+  // export always matches whatever's currently filtered on screen.
+  const leaves = allLeaves.filter(
+    (l) =>
+      (status === "all" || l.status === status) &&
+      (leaveType === "all" || l.leaveType === leaveType) &&
+      (!dateFrom || l.endDate >= dateFrom) &&
+      (!dateTo || l.startDate <= dateTo) &&
+      (!search ||
+        l.employeeName.toLowerCase().includes(search) ||
+        l.employeeEmail.toLowerCase().includes(search))
+  );
   const filename = `leave-requests-${new Date().toISOString().split("T")[0]}.${format}`;
 
   if (format === "xlsx") {

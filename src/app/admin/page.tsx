@@ -279,6 +279,17 @@ export default function AdminDashboard() {
       a.status === b.status ? 0 : a.status === "inactive" ? 1 : -1
     );
 
+  // Mirrors filteredLeaves's own predicate as query params, so Export
+  // CSV/XLSX always matches what the All Requests table currently shows
+  // instead of silently dumping every request regardless of filters.
+  const exportParams = new URLSearchParams();
+  if (filterStatus !== "all") exportParams.set("status", filterStatus);
+  if (filterLeaveType !== "all") exportParams.set("leaveType", filterLeaveType);
+  if (filterDateFrom) exportParams.set("dateFrom", filterDateFrom);
+  if (filterDateTo) exportParams.set("dateTo", filterDateTo);
+  if (search.trim()) exportParams.set("search", search.trim());
+  const exportQuery = exportParams.toString() ? `&${exportParams.toString()}` : "";
+
   const filteredLeaves = allLeaves
     .filter(
       (l) =>
@@ -303,13 +314,13 @@ export default function AdminDashboard() {
           {user?.role === "admin" && (
             <div className="flex items-center gap-2">
               <a
-                href="/api/admin/export?format=csv"
+                href={`/api/admin/export?format=csv${exportQuery}`}
                 className="bg-white border border-gray-200 text-gray-700 text-sm font-semibold px-4 py-2 rounded-xl hover:border-indigo-300 transition-colors shadow-sm"
               >
                 Export CSV
               </a>
               <a
-                href="/api/admin/export?format=xlsx"
+                href={`/api/admin/export?format=xlsx${exportQuery}`}
                 className="bg-white border border-gray-200 text-gray-700 text-sm font-semibold px-4 py-2 rounded-xl hover:border-indigo-300 transition-colors shadow-sm"
               >
                 Export XLSX
