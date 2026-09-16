@@ -290,6 +290,12 @@ export default function AdminDashboard() {
   if (search.trim()) exportParams.set("search", search.trim());
   const exportQuery = exportParams.toString() ? `&${exportParams.toString()}` : "";
 
+  // Looks up each row's employee ID for the All Requests table, same
+  // source/placeholder rule as the Employee Balances table's ID column.
+  const employeeIdByEmail = new Map(
+    employees.map((e) => [e.email.toLowerCase(), e.id])
+  );
+
   const filteredLeaves = allLeaves
     .filter(
       (l) =>
@@ -698,6 +704,9 @@ export default function AdminDashboard() {
               <thead className="bg-indigo-50/50 border-b border-gray-100">
                 <tr>
                   <th className="text-left px-4 py-3 font-semibold text-indigo-900/70">
+                    ID
+                  </th>
+                  <th className="text-left px-4 py-3 font-semibold text-indigo-900/70">
                     Employee
                   </th>
                   <th className="text-left px-4 py-3 font-semibold text-indigo-900/70">
@@ -721,8 +730,15 @@ export default function AdminDashboard() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {filteredLeaves.map((l) => (
+                {filteredLeaves.map((l) => {
+                  const empId = employeeIdByEmail.get(
+                    l.employeeEmail.toLowerCase()
+                  );
+                  return (
                   <tr key={l.id} className="hover:bg-gray-50/50">
+                    <td className="px-4 py-3 font-mono text-xs text-gray-500 whitespace-nowrap">
+                      {empId && empId !== l.employeeEmail ? empId : "—"}
+                    </td>
                     <td className="px-4 py-3">
                       <p className="font-medium text-gray-900">
                         {l.employeeName}
@@ -777,7 +793,8 @@ export default function AdminDashboard() {
                       {l.reviewedByName || l.reviewedBy || "—"}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
