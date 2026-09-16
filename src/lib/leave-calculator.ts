@@ -322,7 +322,8 @@ function freelancerEntitlement(): LeaveBalance {
 }
 
 // ── Non-Tele-sales balance ──────────────────────────────────────
-// During probation: 1 SL + 1 CL per month
+// During probation: flat 1 SL + 1 CL (HR policy, 2026-09-16) -- not
+// pro-rated by time elapsed, just "1" for as long as probation lasts.
 // After probation: full pro-rata SL (14/yr) + CL (10/yr)
 //   Pro-rata: 14 minus months missed (Jan=0 missed, Feb=1 missed, etc.)
 // AL: lifetime running total, zero until probation ends, then 1 day per
@@ -351,8 +352,8 @@ function nonTeleSalesEntitlement(
   // ── Sick Leave: 14 days/year, pro-rata if joined after Jan 1 ──
   let sickEntitled: number;
   if (onProbation) {
-    // During probation: 1 per month worked since FT date (or joining)
-    sickEntitled = monthsWorkedInYear(ftDate, year);
+    // Flat 1 during probation, regardless of how long they've been in it.
+    sickEntitled = 1;
   } else if (year === ftYear) {
     // Pro-rata: 14 minus months missed
     const monthsMissed = ftDate.getMonth();
@@ -364,7 +365,8 @@ function nonTeleSalesEntitlement(
   // ── Casual Leave: 10 days/year, pro-rata ──
   let casualEntitled: number;
   if (onProbation) {
-    casualEntitled = monthsWorkedInYear(ftDate, year);
+    // Flat 1 during probation, same rule as sick leave above.
+    casualEntitled = 1;
   } else if (year === ftYear) {
     const monthsMissed = ftDate.getMonth();
     casualEntitled = Math.max(10 - monthsMissed, 0);
@@ -522,7 +524,11 @@ export function calculateBalance(
   // starting point, and the same 1-day-per-24.33-days formula adds to it
   // from the import date onward (HR's request, 2026-09-14), never past the
   // lifetime cap. Sick/casual are year-scoped fixed allowances, so their
-  // sheet entitlement stands as-is.
+  // sheet entitlement stands as-is -- EXCEPT while the employee is still on
+  // probation: the sheet's number predates the flat-1-during-probation
+  // policy above, so it would just clobber that with a stale figure.
+  // (2026-09-16)
+  const onProbationNow = isOnProbation(employee, asOfDate);
   if (snapshot) {
     const snapshotDate = snapshot.importedAt.slice(0, 10);
     const approvedSinceSnapshot = approvedLeaves.filter(
@@ -533,6 +539,7 @@ export function calculateBalance(
     );
     const usedSinceSnapshot = calculateUsed(approvedSinceSnapshot, targetYear);
     (["sick", "casual", "annual"] as const).forEach((type) => {
+      if ((type === "sick" || type === "casual") && onProbationNow) return;
       const entry = snapshot[type];
       if (entry) {
         entitled[type] = entry.entitled;
