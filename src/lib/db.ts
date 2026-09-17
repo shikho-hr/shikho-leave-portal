@@ -1003,22 +1003,26 @@ export async function addComment(
   return data;
 }
 
+// The one fixed HR mailbox CC'd on every leave email — replaces fanning the
+// email out to every admin account (the in-app bell still does that, below).
+const HR_NOTIFICATION_EMAIL = "hr@shikho.com";
+
 // Fans a comment/note out to everyone with a stake in the leave it's on —
 // minus whoever wrote it, so nobody gets notified about their own message.
-// Regular comments go to the employee, their manager, and every HR/admin.
-// Internal notes go to the manager and HR/admins only — the employee is
-// deliberately never a recipient, matching internalNotes' own visibility
-// rule ("never exposed to the employee"). isSubmission marks the one
-// special case: the reason auto-added as a leave's first comment, which
-// reads to recipients as "X submitted a new leave request" rather than
-// "X commented" — same recipients/mechanics as a regular comment, just a
-// different notification framing. Best-effort: a missing leave/employee
-// record just means fewer recipients, never a thrown error, since a
-// notification failing to send shouldn't block the comment itself. Also
-// emails the same recipients (see sendMail() in mailer.ts — itself
-// best-effort and gated behind LEAVE_EMAILS_ENABLED), unless suppressEmail
-// is set — used for approval/forward auto-comments, which must never email
-// per the "never on approval" rule.
+// Regular comments go to the employee, their manager, and every HR/admin
+// (bell) / HR_NOTIFICATION_EMAIL (email). Internal notes go to the manager
+// and HR/admins only — the employee is deliberately never a recipient,
+// matching internalNotes' own visibility rule ("never exposed to the
+// employee"). isSubmission marks the one special case: the reason
+// auto-added as a leave's first comment, which reads to recipients as "X
+// submitted a new leave request" rather than "X commented" — same
+// recipients/mechanics as a regular comment, just a different notification
+// framing. Best-effort: a missing leave/employee record just means fewer
+// recipients, never a thrown error, since a notification failing to send
+// shouldn't block the comment itself. Also emails (see sendMail() in
+// mailer.ts — itself best-effort and gated behind LEAVE_EMAILS_ENABLED),
+// unless suppressEmail is set — used for approval/forward auto-comments,
+// which must never email per the "never on approval" rule.
 async function notifyRecipients(
   leaveId: string,
   authorEmail: string,
@@ -1042,6 +1046,16 @@ async function notifyRecipients(
     recipients.add(employee.managerEmail.toLowerCase());
   }
 
+  // The email recipient set (employee unless internal note + manager + HR)
+  // is captured here, before admins are folded into `recipients` below and
+  // before the author is excluded — per the business rule, the actor still
+  // gets a copy of the email (e.g. the employee who submits still gets the
+  // submission email, the manager who rejects still gets the rejection
+  // email). Email always CCs the single HR mailbox, not every admin
+  // account — that fan-out is for the in-app bell only (below).
+  const emailRecipientSet = new Set(recipients);
+  emailRecipientSet.add(HR_NOTIFICATION_EMAIL);
+
   // No status filter here, deliberately — matches prior behavior exactly
   // (every employee with role "admin" is notified, active or not).
   // The system admin (hr.portal@) is also the mailbox these emails are SENT
@@ -1052,15 +1066,6 @@ async function notifyRecipients(
   });
   const adminEmails = new Set(admins.map((a) => a.email.toLowerCase()));
   adminEmails.forEach((email) => recipients.add(email));
-
-  // The full recipient set (employee unless internal note + manager + HR)
-  // is captured here, before the author is excluded below, for the email
-  // — per the business rule, the actor still gets a copy of the email
-  // (e.g. the employee who submits still gets the submission email, the
-  // manager who rejects still gets the rejection email). The in-app bell
-  // notification below is a separate concern and keeps excluding the
-  // actor — nobody needs a bell alert for their own action.
-  const emailRecipientSet = new Set(recipients);
 
   recipients.delete(authorEmail.toLowerCase());
   if (recipients.size === 0 && emailRecipientSet.size === 0) return;
@@ -1185,18 +1190,18 @@ async function notifyRecipients(
   const rootMessageId = `<leave-${leaveId}@shikho.com>`;
 
   // Test-only escape hatch: when previewing email formatting/rendering
-  // locally, skip CC'ing real HR/admin inboxes — in-app notifications
-  // above are unaffected, this only trims who the email itself goes to.
-  // Must stay off (unset) anywhere real, since HR being CC'd is the actual
+  // locally, skip CC'ing the real HR inbox — in-app notifications above
+  // are unaffected, this only trims who the email itself goes to. Must
+  // stay off (unset) anywhere real, since HR being CC'd is the actual
   // business rule — see project_leave_email_notifications memory.
   //
-  // Only strips admins who are HR-only here — an admin who happens to also
-  // be the applicant or the manager on this specific leave (e.g. testing
-  // with an admin-role account) still gets the email as themselves, not as
-  // "HR"; otherwise that person could end up with zero recipients at all.
+  // Only strips the HR mailbox if it's HR-only here — on the off chance
+  // HR_NOTIFICATION_EMAIL is also the applicant or manager on this specific
+  // leave, it still gets the email as themselves, not as "HR"; otherwise
+  // that person could end up with zero recipients at all.
   const managerEmail = employee?.managerEmail?.toLowerCase();
   const hrOnlyEmails = new Set(
-    Array.from(adminEmails).filter(
+    [HR_NOTIFICATION_EMAIL].filter(
       (email) =>
         email !== leave.employeeEmail.toLowerCase() && email !== managerEmail
     )
