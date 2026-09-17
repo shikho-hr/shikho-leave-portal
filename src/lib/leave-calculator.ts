@@ -822,6 +822,16 @@ export function validateLeaveRequest(
     };
   }
 
+  // Casual Leave is blocked entirely once an employee is serving notice
+  // (any lastDay set, past or future) — see getAvailableLeaveTypes, which
+  // hides the option from the picker; this is the server-side backstop.
+  if (leaveType === "casual" && employee.lastDay) {
+    return {
+      valid: false,
+      error: "Casual leave is not available once notice period has started.",
+    };
+  }
+
   // CL max 2 days at a stretch for full-time employees
   if (
     leaveType === "casual" &&
@@ -917,8 +927,11 @@ export function getAvailableLeaveTypes(
   if (employee.contractType === "freelancer") {
     return [];
   }
+  // Serving notice (any lastDay set, past or future) — Casual Leave is
+  // off the table entirely, see validateLeaveRequest's matching check.
+  const hasResigned = !!employee.lastDay;
   if (employee.contractType !== "full-time") {
-    return ["sick", "casual"];
+    return hasResigned ? ["sick"] : ["sick", "casual"];
   }
 
   return [
@@ -935,6 +948,9 @@ export function getAvailableLeaveTypes(
     "offsite_attendance",
     "wfh_deployment",
   ].filter((type) => {
+    if (type === "casual") {
+      return !hasResigned;
+    }
     if (type === "annual") {
       return (
         !isOnProbation(employee, new Date()) ||

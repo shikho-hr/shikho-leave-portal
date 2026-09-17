@@ -77,6 +77,7 @@ function rowToEmployee(row: {
   gender: string | null;
   contractType: string;
   probationAnnualLeaveApproved: boolean;
+  lastDay: Date | null;
 }): Employee {
   return {
     id: row.id,
@@ -96,6 +97,7 @@ function rowToEmployee(row: {
     gender: (row.gender ?? "") as Gender,
     contractType: row.contractType as ContractType,
     probationAnnualLeaveApproved: row.probationAnnualLeaveApproved,
+    lastDay: row.lastDay ? dateToStr(row.lastDay) : "",
   };
 }
 
@@ -440,6 +442,7 @@ export async function upsertEmployeesFromSheet(
           fullTimeEffectiveDate: strToDate(emp.fullTimeEffectiveDate),
           gender: emp.gender || null,
           contractType: emp.contractType,
+          lastDay: strToDate(emp.lastDay),
         };
         // `id` is the HR employee ID from the sheet's column A ("0001",
         // "AC0013"…). Rows synced before this was persisted carry the

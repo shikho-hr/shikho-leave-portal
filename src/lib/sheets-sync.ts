@@ -197,6 +197,17 @@ export async function fetchEmployeesFromSheet(): Promise<EmployeeSyncResult> {
       );
     }
 
+    // "lastday" — notice-period end date. Blank means still active/no
+    // notice given; any date at all (past or future) blocks Casual Leave,
+    // see getAvailableLeaveTypes/validateLeaveRequest in leave-calculator.ts.
+    const lastDayRaw = get(row, "lastday");
+    const lastDay = normalizeDate(lastDayRaw);
+    if (lastDay === null) {
+      errors.push(
+        `Row ${rowNum} (${email}): invalid lastday "${lastDayRaw}", left blank`
+      );
+    }
+
     const managerEmailRaw = get(row, "managerEmail").toLowerCase();
     const managerEmail = EMAIL_RE.test(managerEmailRaw) ? managerEmailRaw : "";
     // "-", "n/a", "none" etc. are deliberate "no manager" markers (founders,
@@ -230,6 +241,7 @@ export async function fetchEmployeesFromSheet(): Promise<EmployeeSyncResult> {
       // Same reasoning as role above — admin-managed only, ignored by
       // upsertEmployeesFromSheet entirely; this value is never read.
       probationAnnualLeaveApproved: false,
+      lastDay: lastDay || "",
     });
   });
 

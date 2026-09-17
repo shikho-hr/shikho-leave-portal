@@ -21,6 +21,12 @@ model Employee {
   fullTimeEffectiveDate DateTime? @db.Date
   gender                String?
   contractType          String
+  // Notice-period end date, sheet-synced from the "lastday" column. Set
+  // means the employee has resigned and is serving notice - see
+  // getAvailableLeaveTypes()/validateLeaveRequest() in leave-calculator.ts,
+  // which block Casual Leave entirely once this is set (any date, not just
+  // a past one - presence alone is the policy trigger).
+  lastDay               DateTime? @db.Date
   // Admin-granted exception letting this specific employee select Annual
   // Leave while still on probation (normally blocked entirely) - never
   // sheet-synced, see upsertEmployeesFromSheet in db.ts.
