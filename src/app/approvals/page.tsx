@@ -429,11 +429,7 @@ function ApprovalsContent() {
       </div>
 
       {/* Comment thread */}
-      <CommentThread
-        leaveId={leave.id}
-        currentUserEmail={user?.email || ""}
-        hideIfEmpty
-      />
+      <CommentThread leaveId={leave.id} currentUserEmail={user?.email || ""} />
 
       {/* Internal notes — manager/admin only, employee never sees this */}
       <InternalNoteThread leaveId={leave.id} currentUserEmail={user?.email || ""} />
