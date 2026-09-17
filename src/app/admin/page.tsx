@@ -359,7 +359,7 @@ export default function AdminDashboard() {
           >
             {backupResult.error
               ? backupResult.error
-              : `Backed up ${backupResult.rowsWritten} leave record(s) to the Google Sheet.`}
+              : `Backed up ${(backupResult.rowsWritten ?? 0).toLocaleString()} leave record(s) to the Google Sheet.`}
           </div>
         )}
 
@@ -372,12 +372,12 @@ export default function AdminDashboard() {
             }`}
           >
             <p>
-              Synced {syncResult.employeesSynced} employees and{" "}
-              {syncResult.openingBalancesSynced} opening balances.
+              Synced {syncResult.employeesSynced.toLocaleString()} employees and{" "}
+              {syncResult.openingBalancesSynced.toLocaleString()} opening balances.
               {syncResult.errors.length > 0 && (
                 <>
                   {" "}
-                  {syncResult.errors.length} rows skipped —{" "}
+                  {syncResult.errors.length.toLocaleString()} rows skipped —{" "}
                   <button
                     type="button"
                     onClick={() => setShowSyncErrors((v) => !v)}
@@ -403,13 +403,13 @@ export default function AdminDashboard() {
           <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm border-l-4 border-l-indigo-600">
             <p className="text-sm text-gray-500">Total Employees</p>
             <p className="text-2xl font-bold text-gray-900 mt-1">
-              {employees.length}
+              {employees.length.toLocaleString()}
             </p>
           </div>
           <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm border-l-4 border-l-sunrise">
             <p className="text-sm text-gray-500">Pending Requests</p>
             <p className="text-2xl font-bold text-yellow-700 mt-1">
-              {allLeaves.filter((l) => l.status === "pending").length}
+              {allLeaves.filter((l) => l.status === "pending").length.toLocaleString()}
             </p>
           </div>
           <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm border-l-4 border-l-green-500">
@@ -424,14 +424,14 @@ export default function AdminDashboard() {
                     d.getMonth() === now.getMonth() &&
                     d.getFullYear() === now.getFullYear()
                   );
-                }).length
+                }).length.toLocaleString()
               }
             </p>
           </div>
           <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm border-l-4 border-l-magenta">
             <p className="text-sm text-gray-500">Total Requests</p>
             <p className="text-2xl font-bold text-gray-900 mt-1">
-              {allLeaves.length}
+              {allLeaves.length.toLocaleString()}
             </p>
           </div>
         </div>
@@ -604,7 +604,7 @@ export default function AdminDashboard() {
 
         {tab === "requests" && (
           <p className="text-sm text-gray-500 mb-4">
-            {filteredLeaves.length} request
+            {filteredLeaves.length.toLocaleString()} request
             {filteredLeaves.length === 1 ? "" : "s"}
             {filterLeaveType !== "all" &&
               ` under ${TYPE_LABELS[filterLeaveType]}`}
