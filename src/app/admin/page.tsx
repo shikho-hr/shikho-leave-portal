@@ -401,9 +401,9 @@ export default function AdminDashboard() {
         {/* Summary cards */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
           <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm border-l-4 border-l-indigo-600">
-            <p className="text-sm text-gray-500">Total Employees</p>
+            <p className="text-sm text-gray-500">Active Employees</p>
             <p className="text-2xl font-bold text-gray-900 mt-1">
-              {employees.length.toLocaleString()}
+              {employees.filter((e) => e.status === "active").length.toLocaleString()}
             </p>
           </div>
           <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm border-l-4 border-l-sunrise">
