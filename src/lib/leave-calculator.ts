@@ -69,11 +69,14 @@ export const HALF_DAY_ELIGIBLE_TYPES: LeaveType[] = [
   "compensatory",
 ];
 
-// Off-site Attendance / WFH - Deployment are unlimited — tracked and
+// Every WFH type except Monthly WFH for Ladies is unlimited — tracked and
 // approved like any other request, but never counted against a leave
 // balance (see the LeaveBalance comment in types.ts), so they're skipped
-// entirely by the balance check in validateLeaveRequest().
+// entirely by the balance check in validateLeaveRequest(). Monthly WFH for
+// Ladies is the one exception: capped at 1/month via
+// hasUsedLadiesWfhThisMonth(), not this list.
 export const UNLIMITED_LEAVE_TYPES: LeaveType[] = [
+  "wfh",
   "offsite_attendance",
   "wfh_deployment",
 ];
