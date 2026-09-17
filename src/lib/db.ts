@@ -1023,7 +1023,7 @@ const HR_NOTIFICATION_EMAIL = "hr@shikho.com";
 // mailer.ts — itself best-effort and gated behind LEAVE_EMAILS_ENABLED),
 // unless suppressEmail is set — used for approval/forward auto-comments,
 // which must never email per the "never on approval" rule.
-async function notifyRecipients(
+export async function notifyRecipients(
   leaveId: string,
   authorEmail: string,
   authorName: string,

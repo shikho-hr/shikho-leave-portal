@@ -5,6 +5,7 @@ import {
   getLeaveById,
   getEmployeeByEmail,
   addComment,
+  notifyRecipients,
   approveWithCompOffConsumption,
 } from "@/lib/db";
 import { isSingleStageApproval } from "@/lib/leave-calculator";
@@ -192,25 +193,46 @@ export async function PATCH(
       );
     }
 
-    // Auto-add a comment for the action
-    const actionLabel =
-      newStatus === "manager_approved"
-        ? "Manager approved — awaiting HR approval"
-        : newStatus === "approved"
-        ? "Approved"
-        : "Rejected";
-    const autoComment = comments
-      ? `${actionLabel}: ${comments}`
-      : actionLabel;
-    await addComment(
-      params.id,
-      user.email,
-      user.name || user.email,
-      autoComment,
-      false,
-      newStatus === "manager_approved" || newStatus === "approved",
-      newStatus === "rejected"
-    );
+    // Auto-add a comment for the action. A manager's own final approval
+    // with no remarks (single-stage leave types) skips visibly posting the
+    // boilerplate "Approved" text — the status badge already reads
+    // "Approved", so it'd just be noise in the thread — but still fires
+    // the employee's bell notification directly via notifyRecipients,
+    // without persisting a LeaveComment row for it. Still posted as a real
+    // comment if the manager actually wrote something, and unaffected for
+    // HR/admin approvals or rejections.
+    const isBareManagerApproval =
+      newStatus === "approved" && role === "manager" && !comments?.trim();
+    if (isBareManagerApproval) {
+      await notifyRecipients(
+        params.id,
+        user.email,
+        user.name || user.email,
+        "Approved",
+        false,
+        false,
+        true
+      );
+    } else {
+      const actionLabel =
+        newStatus === "manager_approved"
+          ? "Manager approved — awaiting HR approval"
+          : newStatus === "approved"
+          ? "Approved"
+          : "Rejected";
+      const autoComment = comments
+        ? `${actionLabel}: ${comments}`
+        : actionLabel;
+      await addComment(
+        params.id,
+        user.email,
+        user.name || user.email,
+        autoComment,
+        false,
+        newStatus === "manager_approved" || newStatus === "approved",
+        newStatus === "rejected"
+      );
+    }
 
     return NextResponse.json({
       message:
