@@ -424,6 +424,7 @@ export async function upsertEmployeesFromSheet(
   // A sheet row for the system admin account must never override its
   // forced role/status (or turn it into "staff") — drop it up front.
   employees = employees.filter((emp) => !isSystemAdmin(emp.email));
+  const sheetEmails = employees.map((emp) => emp.email.toLowerCase());
   for (const batch of chunk(employees, 200)) {
     await Promise.all(
       batch.map((emp) => {
@@ -465,6 +466,21 @@ export async function upsertEmployeesFromSheet(
       )
     );
   }
+
+  // An employee deleted outright from the sheet (as opposed to having their
+  // own status cell switched to "inactive") has no incoming row at all, so
+  // the upsert above never touches their record — left alone, they'd stay
+  // "active" in the DB forever. Anyone currently active but missing from
+  // this sync's sheet snapshot is deactivated here instead, so a removal
+  // from the roster is equivalent to marking them inactive. The system
+  // admin is exempt — it's never sheet-driven (see the filter above).
+  await prisma.employee.updateMany({
+    where: {
+      status: "active",
+      email: { notIn: [...sheetEmails, SYSTEM_ADMIN_EMAIL] },
+    },
+    data: { status: "inactive" },
+  });
 }
 
 // Admin-only role change (Team Details' "Role Assigner" tab) — the only
