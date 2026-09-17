@@ -1165,17 +1165,18 @@ export async function notifyRecipients(
       link,
     };
   } else {
-    // Manager or HR asking the employee something before deciding. The
-    // quote is labelled by role rather than name so the employee knows
-    // which stage the question is coming from.
+    // Manager or HR commenting on the employee's request before deciding.
+    // Both the intro and the quote are labelled by role rather than name,
+    // so the employee knows which stage the comment is coming from without
+    // it reading as a specific person addressing them.
     const author = await getEmployeeByEmail(authorEmail);
     const authorRole = author?.role === "admin" ? "HR" : "Manager";
     content = {
       greeting: employeeGreeting,
       intro: [
-        { text: `${authorName} has a question on your ` },
+        { text: `${authorRole} made a comment on your ` },
         { text: typeLabel, bold: true },
-        { text: `${requestSuffix} before it can move forward.` },
+        { text: `${requestSuffix}.` },
       ],
       quote: { label: `${authorRole} commented:`, text: commentText },
       buttonLabel,
