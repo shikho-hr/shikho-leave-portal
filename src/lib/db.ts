@@ -1242,13 +1242,15 @@ export async function notifyRecipients(
 
 // ── Notifications ───────────────────────────────────────────────
 
+// Unread first (so a busy inbox doesn't bury new items under old read
+// ones), newest first within each group.
 export async function getNotificationsForUser(
   email: string,
   limitCount = 30
 ): Promise<Notification[]> {
   const rows = await prisma.notification.findMany({
     where: { recipientEmail: email.toLowerCase() },
-    orderBy: { createdAt: "desc" },
+    orderBy: [{ read: "asc" }, { createdAt: "desc" }],
     take: limitCount,
   });
   return rows.map(rowToNotification);
