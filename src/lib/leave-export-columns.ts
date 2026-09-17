@@ -4,10 +4,22 @@ import { LeaveRequest } from "./types";
 // collection in tabular form — the CSV/XLSX download (api/admin/export)
 // and the Google Sheet backup (sheets-backup.ts) both use this, so the two
 // surfaces can never drift out of sync with each other.
+//
+// `employeeIdByEmail` is keyed by lowercased email — same lookup source
+// and "—" placeholder rule (for employees whose sheet ID was never
+// persisted, who still carry their email as an id) as the ID columns on
+// Team Details' Employee Balances / All Requests tables.
 export const COLUMNS: {
   header: string;
-  get: (l: LeaveRequest) => string | number;
+  get: (l: LeaveRequest, employeeIdByEmail: Map<string, string>) => string | number;
 }[] = [
+  {
+    header: "Employee ID",
+    get: (l, employeeIdByEmail) => {
+      const id = employeeIdByEmail.get(l.employeeEmail.toLowerCase());
+      return id && id !== l.employeeEmail ? id : "—";
+    },
+  },
   { header: "Employee Name", get: (l) => l.employeeName },
   { header: "Employee Email", get: (l) => l.employeeEmail },
   { header: "Leave Type", get: (l) => l.leaveType },

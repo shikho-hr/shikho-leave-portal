@@ -1,25 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { getCurrentUser } from "@/lib/auth";
-import { getLeaveRequests } from "@/lib/db";
+import { getLeaveRequests, getEmployees } from "@/lib/db";
 import { LeaveRequest } from "@/lib/types";
 import { COLUMNS } from "@/lib/leave-export-columns";
 
-function toCsv(leaves: LeaveRequest[]): string {
+function toCsv(leaves: LeaveRequest[], employeeIdByEmail: Map<string, string>): string {
   const escape = (val: string | number) => {
     const s = String(val ?? "");
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const header = COLUMNS.map((c) => escape(c.header)).join(",");
   const rows = leaves.map((l) =>
-    COLUMNS.map((c) => escape(c.get(l))).join(",")
+    COLUMNS.map((c) => escape(c.get(l, employeeIdByEmail))).join(",")
   );
   return [header, ...rows].join("\r\n");
 }
 
-function toXlsx(leaves: LeaveRequest[]): Buffer {
+function toXlsx(leaves: LeaveRequest[], employeeIdByEmail: Map<string, string>): Buffer {
   const data = leaves.map((l) =>
-    Object.fromEntries(COLUMNS.map((c) => [c.header, c.get(l)]))
+    Object.fromEntries(COLUMNS.map((c) => [c.header, c.get(l, employeeIdByEmail)]))
   );
   const worksheet = XLSX.utils.json_to_sheet(data, {
     header: COLUMNS.map((c) => c.header),
@@ -42,7 +42,13 @@ export async function GET(req: NextRequest) {
   const dateTo = req.nextUrl.searchParams.get("dateTo") || "";
   const search = (req.nextUrl.searchParams.get("search") || "").toLowerCase();
 
-  const allLeaves = await getLeaveRequests();
+  const [allLeaves, employees] = await Promise.all([
+    getLeaveRequests(),
+    getEmployees(),
+  ]);
+  const employeeIdByEmail = new Map(
+    employees.map((e) => [e.email.toLowerCase(), e.id])
+  );
   // Same predicate as the All Requests table on Team Details, so an
   // export always matches whatever's currently filtered on screen.
   const leaves = allLeaves.filter(
@@ -58,7 +64,7 @@ export async function GET(req: NextRequest) {
   const filename = `leave-requests-${new Date().toISOString().split("T")[0]}.${format}`;
 
   if (format === "xlsx") {
-    return new NextResponse(new Uint8Array(toXlsx(leaves)), {
+    return new NextResponse(new Uint8Array(toXlsx(leaves, employeeIdByEmail)), {
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "Content-Disposition": `attachment; filename="${filename}"`,
@@ -66,7 +72,7 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  return new NextResponse(toCsv(leaves), {
+  return new NextResponse(toCsv(leaves, employeeIdByEmail), {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
       "Content-Disposition": `attachment; filename="${filename}"`,

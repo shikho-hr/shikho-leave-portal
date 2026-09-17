@@ -1,6 +1,7 @@
 import { JWT } from "google-auth-library";
 import { LeaveRequest } from "./types";
 import { COLUMNS } from "./leave-export-columns";
+import { getEmployees } from "./db";
 
 // Separate from sheets-sync.ts's read-only client (roster import) — this
 // one needs write access, so it gets its own client with a broader scope
@@ -70,7 +71,7 @@ export async function writeLeaveBackup(leaves: LeaveRequest[]): Promise<number> 
 
   const tabName = quoteSheetName(await resolveTabName(sheetId, tabGid, headers));
 
-  const clearRes = await fetch(`${base}/${encodeURIComponent(`${tabName}!A:M`)}:clear`, {
+  const clearRes = await fetch(`${base}/${encodeURIComponent(`${tabName}!A:N`)}:clear`, {
     method: "POST",
     headers,
   });
@@ -78,8 +79,12 @@ export async function writeLeaveBackup(leaves: LeaveRequest[]): Promise<number> 
     throw new Error(`Sheets API clear error: ${clearRes.status} ${await clearRes.text()}`);
   }
 
+  const employees = await getEmployees();
+  const employeeIdByEmail = new Map(
+    employees.map((e) => [e.email.toLowerCase(), e.id])
+  );
   const header = COLUMNS.map((c) => c.header);
-  const rows = leaves.map((l) => COLUMNS.map((c) => c.get(l)));
+  const rows = leaves.map((l) => COLUMNS.map((c) => c.get(l, employeeIdByEmail)));
   const values = [header, ...rows];
 
   const writeRes = await fetch(
