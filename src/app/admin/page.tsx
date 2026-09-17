@@ -408,9 +408,14 @@ export default function AdminDashboard() {
           </div>
           <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm border-l-4 border-l-sunrise">
             <p className="text-sm text-gray-500">Pending Requests</p>
-            <p className="text-2xl font-bold text-yellow-700 mt-1">
-              {allLeaves.filter((l) => l.status === "pending").length.toLocaleString()}
-            </p>
+            <div className="flex items-center divide-x divide-gray-200 mt-1">
+              <p className="text-lg font-bold text-yellow-700 pr-3">
+                Manager - {allLeaves.filter((l) => l.status === "pending").length.toLocaleString()}
+              </p>
+              <p className="text-lg font-bold text-yellow-700 pl-3">
+                HR - {allLeaves.filter((l) => l.status === "manager_approved").length.toLocaleString()}
+              </p>
+            </div>
           </div>
           <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm border-l-4 border-l-green-500">
             <p className="text-sm text-gray-500">Approved This Month</p>
