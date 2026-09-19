@@ -169,21 +169,25 @@ function isExcludedDay(
 // separately, so each year's balance is only charged for the days that
 // actually fall within it. Excludes the weekend and any date in
 // holidayDates (unless overridden by workingWeekendDates), same as the
-// day-counting this replaces.
+// day-counting this replaces — except for Off-site Attendance, which isn't
+// time off (the employee is working, just not from the office), so every
+// calendar day in the range counts regardless of weekend/holiday.
 export function splitDaysByYear(
   startDate: string,
   endDate: string,
   halfDayPeriod: HalfDayPeriod | "" | undefined,
   holidayDates: string[],
-  workingWeekendDates: string[] = []
+  workingWeekendDates: string[] = [],
+  leaveType?: LeaveType
 ): Record<string, number> {
   const holidaySet = new Set(holidayDates);
   const workingWeekendSet = new Set(workingWeekendDates);
   const result: Record<string, number> = {};
+  const countsEveryDay = leaveType === "offsite_attendance";
 
   if (halfDayPeriod) {
     const date = parseISO(startDate);
-    if (!isExcludedDay(date, holidaySet, workingWeekendSet)) {
+    if (countsEveryDay || !isExcludedDay(date, holidaySet, workingWeekendSet)) {
       result[String(date.getFullYear())] = 0.5;
     }
     return result;
@@ -192,7 +196,7 @@ export function splitDaysByYear(
   let cursor = parseISO(startDate);
   const end = parseISO(endDate);
   while (!isAfter(cursor, end)) {
-    if (!isExcludedDay(cursor, holidaySet, workingWeekendSet)) {
+    if (countsEveryDay || !isExcludedDay(cursor, holidaySet, workingWeekendSet)) {
       const key = String(cursor.getFullYear());
       result[key] = (result[key] || 0) + 1;
     }
@@ -205,16 +209,18 @@ export function splitDaysByYear(
 // weekend and any date in holidayDates (unless overridden by
 // workingWeekendDates). Half-day requests are always a single date and
 // count as 0.5 — unless that date itself is excluded, in which case
-// there's nothing to apply for (caller should block submission).
+// there's nothing to apply for (caller should block submission). Off-site
+// Attendance counts every calendar day instead — see splitDaysByYear.
 export function calculateLeaveDays(
   startDate: string,
   endDate: string,
   halfDayPeriod: HalfDayPeriod | "" | undefined,
   holidayDates: string[],
-  workingWeekendDates: string[] = []
+  workingWeekendDates: string[] = [],
+  leaveType?: LeaveType
 ): number {
   return Object.values(
-    splitDaysByYear(startDate, endDate, halfDayPeriod, holidayDates, workingWeekendDates)
+    splitDaysByYear(startDate, endDate, halfDayPeriod, holidayDates, workingWeekendDates, leaveType)
   ).reduce((sum, d) => sum + d, 0);
 }
 

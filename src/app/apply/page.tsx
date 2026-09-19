@@ -98,6 +98,7 @@ export default function ApplyLeave() {
   }, [isHalfDayEligible, form.halfDayPeriod]);
 
   const effectiveEndDate = form.halfDayPeriod ? form.startDate : form.endDate;
+  const isOffsiteAttendance = form.leaveType === "offsite_attendance";
   const computedDays =
     form.startDate && effectiveEndDate
       ? calculateLeaveDays(
@@ -105,7 +106,8 @@ export default function ApplyLeave() {
           effectiveEndDate,
           form.halfDayPeriod || undefined,
           holidayDates,
-          workingWeekendDates
+          workingWeekendDates,
+          form.leaveType as LeaveType
         )
       : 0;
 
@@ -363,7 +365,9 @@ export default function ApplyLeave() {
               className="w-full border border-gray-100 bg-gray-50 rounded-xl px-3 py-2.5 text-sm"
             />
             <p className="text-xs text-gray-400 mt-1">
-              Fridays, Saturdays, and holidays don&apos;t count toward leave days.
+              {isOffsiteAttendance
+                ? "Every day in the range counts, including Fridays, Saturdays, and holidays."
+                : "Fridays, Saturdays, and holidays don't count toward leave days."}
             </p>
           </div>
 

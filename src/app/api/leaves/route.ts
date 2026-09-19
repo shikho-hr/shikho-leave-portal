@@ -147,7 +147,8 @@ export async function POST(req: NextRequest) {
       endDate,
       halfDayPeriod,
       holidayDates,
-      workingWeekends
+      workingWeekends,
+      leaveType as LeaveType
     );
 
     // Validate balance — per year, since a backdated request applied for
@@ -159,7 +160,8 @@ export async function POST(req: NextRequest) {
       endDate,
       halfDayPeriod,
       holidayDates,
-      workingWeekends
+      workingWeekends,
+      leaveType as LeaveType
     );
     const startYear = parseISO(startDate).getFullYear();
 

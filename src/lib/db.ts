@@ -1120,9 +1120,14 @@ export async function notifyRecipients(
 
   // Every notification uses the same subject so mail clients group them as
   // one conversation alongside the Message-ID threading below. "WFH" for
-  // the three work-from-home arrangements, "Leave" for everything else.
-  const subjectPrefix = WFH_LEAVE_TYPES.includes(leave.leaveType) ? "WFH" : "Leave";
-  const subject = `[${subjectPrefix}] ${leave.employeeName} - ${typeLabel}`;
+  // the three work-from-home arrangements, "Leave" for everything else. Off-
+  // site Attendance isn't a leave at all, so it gets its own bracketed tag
+  // instead of "[Leave] ... - Off-site Attendance" and skips the type-label
+  // suffix (the tag already says it).
+  const subject =
+    leave.leaveType === "offsite_attendance"
+      ? `[Off-site Attendance] ${leave.employeeName}`
+      : `[${WFH_LEAVE_TYPES.includes(leave.leaveType) ? "WFH" : "Leave"}] ${leave.employeeName} - ${typeLabel}`;
 
   // Emails are addressed to one person even though everyone with a stake
   // receives a copy: the manager for anything that needs their review, the
