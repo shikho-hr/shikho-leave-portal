@@ -1244,7 +1244,10 @@ export async function notifyRecipients(
       details: [
         { label: "Leave Type:", value: typeLabel },
         { label: "Dates:", value: `${dateRange} (${daysLabel})` },
-        { label: "Reason:", value: `"${commentText}"` },
+        // Reason is optional for a few types (Maternity/Paternity/Monthly
+        // WFH for Ladies) — omit the row entirely rather than showing
+        // empty quotes when it's left blank.
+        ...(commentText ? [{ label: "Reason:", value: `"${commentText}"` }] : []),
       ],
       buttonLabel,
       link,

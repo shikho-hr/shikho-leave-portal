@@ -223,13 +223,15 @@ export async function POST(req: NextRequest) {
       appliedOn: new Date().toISOString().split("T")[0],
     });
 
-    // Auto-add the reason as the first comment (skip if left blank for a
-    // reason-optional type, to avoid creating an empty comment). Flagged
-    // as a submission so recipients see "X submitted a new leave request"
-    // rather than a generic comment notification.
-    if (reason) {
-      await addComment(id, user.email, employee.name, reason, true);
-    }
+    // Auto-add the reason as the first comment — always, even left blank
+    // for a reason-optional type (Maternity/Paternity/Monthly WFH for
+    // Ladies), so the employee/manager/HR submission email still goes out.
+    // getComments() already strips this entry from the visible thread when
+    // it's blank (matches leave.reason exactly), so an empty reason never
+    // shows as a stray comment. Flagged as a submission so recipients see
+    // "X submitted a new leave request" rather than a generic comment
+    // notification.
+    await addComment(id, user.email, employee.name, reason, true);
 
     return NextResponse.json({ id, message: "Leave request submitted" });
   } catch (err) {
