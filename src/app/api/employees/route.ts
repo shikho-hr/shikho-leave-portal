@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import {
-  getEmployees,
   getEmployeesByManager,
   getApprovedLeavesGroupedByEmployees,
   getAllOpeningBalances,
@@ -9,6 +8,8 @@ import {
   getCompOffSummaries,
   getCachedEmployeeBalances,
   refreshEmployeeBalanceCache,
+  getCachedRoster,
+  refreshRosterCache,
 } from "@/lib/db";
 import { calculateBalance } from "@/lib/leave-calculator";
 
@@ -23,11 +24,19 @@ export async function GET() {
 
   try {
     if (user.role === "admin") {
-      // Admin's full-company balance computation is the expensive part
-      // (full leaves scan + per-employee calculateBalance) — served from
-      // the nightly/manually-refreshed cache. The employee list itself
-      // stays live on every request, same as before.
-      const employees = await getEmployees();
+      // Both the employee list and its full-company balance computation
+      // (full leaves scan + per-employee calculateBalance) are served from
+      // roster-sync-refreshed caches instead of recomputed on every
+      // request — see refreshRosterCache/refreshEmployeeBalanceCache in
+      // db.ts, refreshed by "Sync from Sheet" (manual + ~15-day cron) and
+      // by direct admin edits that bypass sync (role/probation changes).
+      let rosterCache = await getCachedRoster();
+      if (!rosterCache) {
+        // Cold start (e.g. right after deploy/migration, before the first
+        // sync) — compute once and populate so this isn't stuck empty.
+        rosterCache = await refreshRosterCache();
+      }
+      const employees = rosterCache.data;
       let cache = await getCachedEmployeeBalances();
       if (!cache) {
         // Cold start (e.g. right after deploy, before the first nightly

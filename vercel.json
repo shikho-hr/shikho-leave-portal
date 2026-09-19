@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/admin/sync-roster",
-      "schedule": "0 3 * * *"
+      "schedule": "0 3 1,16 * *"
     },
     {
       "path": "/api/admin/backup-leaves",

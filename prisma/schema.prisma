@@ -164,6 +164,28 @@ model EmployeeBalanceCache {
   computedAt DateTime @default(now())
 }
 
+// Singleton row caching the full active-employee roster (getEmployees()) for
+// the Admin Team Details listing - refreshed by sheet sync (manual button +
+// cron, every ~15 days) and by the two direct admin edits that bypass sync
+// (updateEmployeeRole, setProbationAnnualLeaveApproval), so an admin's own
+// change is reflected immediately rather than waiting for the next sync.
+model RosterCache {
+  id         String   @id @default("admin")
+  data       Json
+  computedAt DateTime @default(now())
+}
+
+// Singleton row caching every employee's getAvailableLeaveTypes() result
+// (the Apply page's Leave Type dropdown), keyed by email - same refresh
+// triggers as RosterCache above. A stale entry can only ever offer a choice
+// that validateLeaveRequest() then rejects on submit, never let one slip
+// through, so infrequent refresh is safe.
+model AvailableLeaveTypesCache {
+  id         String   @id @default("admin")
+  data       Json
+  computedAt DateTime @default(now())
+}
+
 model Notification {
   id                String   @id
   recipientEmail    String

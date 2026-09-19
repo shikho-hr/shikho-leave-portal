@@ -3,16 +3,13 @@ import { getCurrentUser } from "@/lib/auth";
 import {
   getEmployeeByEmail,
   getApprovedLeavesByEmployee,
-  getLeavesByEmployee,
   getOpeningBalance,
   getBalanceSnapshot,
   getCompOffSummary,
+  getCachedAvailableLeaveTypes,
+  refreshAvailableLeaveTypesCache,
 } from "@/lib/db";
-import {
-  calculateBalance,
-  getAvailableLeaveTypes,
-  isOnProbation,
-} from "@/lib/leave-calculator";
+import { calculateBalance, isOnProbation } from "@/lib/leave-calculator";
 
 export async function GET() {
   const user = await getCurrentUser();
@@ -28,7 +25,6 @@ export async function GET() {
       );
 
     const approvedLeaves = await getApprovedLeavesByEmployee(user.email);
-    const allLeaves = await getLeavesByEmployee(user.email);
     const openingBalance = await getOpeningBalance(user.email);
     const snapshot = await getBalanceSnapshot(user.email);
     const compOff = await getCompOffSummary(user.email);
@@ -41,7 +37,16 @@ export async function GET() {
       undefined,
       compOff
     );
-    const availableTypes = getAvailableLeaveTypes(employee, allLeaves);
+
+    // The Leave Type dropdown's options come from the roster-sync-refreshed
+    // cache (see db.ts) instead of being recomputed live on every page
+    // load — cold start (e.g. right after the migration, before the first
+    // sync) computes and populates it once so the dropdown isn't empty.
+    let leaveTypesCache = await getCachedAvailableLeaveTypes();
+    if (!leaveTypesCache) {
+      leaveTypesCache = await refreshAvailableLeaveTypesCache();
+    }
+    const availableTypes = leaveTypesCache.data[employee.email] || [];
 
     return NextResponse.json({
       balance,

@@ -4,7 +4,12 @@ import {
   fetchEmployeesFromSheet,
   fetchOpeningBalancesFromSheet,
 } from "@/lib/sheets-sync";
-import { upsertEmployeesFromSheet, upsertOpeningBalancesFromSheet } from "@/lib/db";
+import {
+  upsertEmployeesFromSheet,
+  upsertOpeningBalancesFromSheet,
+  refreshRosterCache,
+  refreshAvailableLeaveTypesCache,
+} from "@/lib/db";
 
 // Holidays and working weekends are managed directly in the app (Team
 // Details' "Company Calendar" tab), not synced from the Sheet — see
@@ -22,6 +27,11 @@ async function runSync() {
   // can no longer run as a single Promise.all.
   await upsertEmployeesFromSheet(employeeResult.employees);
   await upsertOpeningBalancesFromSheet(balanceResult.balances);
+
+  // Roster and Apply-page leave-type caches are only ever refreshed here
+  // (manual "Sync from Sheet" click or the cron below) plus the two direct
+  // admin edits in db.ts that bypass sync entirely.
+  await Promise.all([refreshRosterCache(), refreshAvailableLeaveTypesCache()]);
 
   return NextResponse.json({
     employeesSynced: employeeResult.employees.length,

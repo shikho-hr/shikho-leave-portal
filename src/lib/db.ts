@@ -32,6 +32,7 @@ import {
   WFH_LEAVE_TYPES,
   formatDateRange,
   calculateBalance,
+  getAvailableLeaveTypes,
 } from "./leave-calculator";
 import { sendMail } from "./mailer";
 import { renderEmail, type EmailContent } from "./email-templates";
@@ -500,6 +501,9 @@ export async function updateEmployeeRole(
     where: { email: email.toLowerCase() },
     data: { role },
   });
+  // Bypasses sheet sync, so the roster cache needs its own refresh here or
+  // the admin wouldn't see their own change until the next sync.
+  await refreshRosterCache();
 }
 
 // Admin-only grant/revoke for the Annual-Leave-during-probation exception
@@ -512,6 +516,9 @@ export async function setProbationAnnualLeaveApproval(
     where: { email: email.toLowerCase() },
     data: { probationAnnualLeaveApproved: approved },
   });
+  // Bypasses sheet sync, and this flag also gates Annual Leave eligibility
+  // during probation, so both caches need a refresh, not just the roster.
+  await Promise.all([refreshRosterCache(), refreshAvailableLeaveTypesCache()]);
 }
 
 // Everyone currently granted the exception AND still on probation — the
@@ -934,6 +941,91 @@ export async function getCachedEmployeeBalances(): Promise<{
   if (!row) return null;
   return {
     data: row.data as unknown as Record<string, LeaveBalance>,
+    computedAt: row.computedAt,
+  };
+}
+
+// ── Roster cache ───────────────────────────────────────────────
+// The Admin Team Details employee list (getEmployees()) - refreshed by sheet
+// sync (manual button + ~15-day cron) and by the two direct admin edits that
+// bypass sync (updateEmployeeRole, setProbationAnnualLeaveApproval), so an
+// admin's own change shows immediately instead of waiting for the next sync.
+
+export async function refreshRosterCache(): Promise<{
+  data: Employee[];
+  computedAt: Date;
+}> {
+  const data = await getEmployees();
+  const jsonData = data as unknown as Prisma.InputJsonValue;
+  const row = await prisma.rosterCache.upsert({
+    where: { id: "admin" },
+    create: { id: "admin", data: jsonData },
+    update: { data: jsonData, computedAt: new Date() },
+  });
+  return { data, computedAt: row.computedAt };
+}
+
+export async function getCachedRoster(): Promise<{
+  data: Employee[];
+  computedAt: Date;
+} | null> {
+  const row = await prisma.rosterCache.findUnique({ where: { id: "admin" } });
+  if (!row) return null;
+  return { data: row.data as unknown as Employee[], computedAt: row.computedAt };
+}
+
+// ── Available leave types cache ───────────────────────────────────
+// The Apply page's Leave Type dropdown - same refresh triggers as
+// RosterCache above. A stale entry can only ever offer a choice that
+// validateLeaveRequest() then rejects on submit, never let one slip through,
+// so infrequent refresh is safe (see plan for the full reasoning).
+
+export async function computeAllAvailableLeaveTypes(): Promise<
+  Record<string, LeaveType[]>
+> {
+  const employees = await getEmployees();
+  const allLeaves = await getLeavesByEmployees(employees.map((e) => e.email));
+  const leavesByEmail = new Map<string, LeaveRequest[]>();
+  allLeaves.forEach((leave) => {
+    const list = leavesByEmail.get(leave.employeeEmail) || [];
+    list.push(leave);
+    leavesByEmail.set(leave.employeeEmail, list);
+  });
+
+  const result: Record<string, LeaveType[]> = {};
+  for (const emp of employees) {
+    result[emp.email] = getAvailableLeaveTypes(
+      emp,
+      leavesByEmail.get(emp.email) || []
+    );
+  }
+  return result;
+}
+
+export async function refreshAvailableLeaveTypesCache(): Promise<{
+  data: Record<string, LeaveType[]>;
+  computedAt: Date;
+}> {
+  const data = await computeAllAvailableLeaveTypes();
+  const jsonData = data as unknown as Prisma.InputJsonValue;
+  const row = await prisma.availableLeaveTypesCache.upsert({
+    where: { id: "admin" },
+    create: { id: "admin", data: jsonData },
+    update: { data: jsonData, computedAt: new Date() },
+  });
+  return { data, computedAt: row.computedAt };
+}
+
+export async function getCachedAvailableLeaveTypes(): Promise<{
+  data: Record<string, LeaveType[]>;
+  computedAt: Date;
+} | null> {
+  const row = await prisma.availableLeaveTypesCache.findUnique({
+    where: { id: "admin" },
+  });
+  if (!row) return null;
+  return {
+    data: row.data as unknown as Record<string, LeaveType[]>,
     computedAt: row.computedAt,
   };
 }
