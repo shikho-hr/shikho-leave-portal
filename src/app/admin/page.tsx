@@ -37,6 +37,18 @@ interface LeaveRow {
   extraWorkEndDate?: string;
 }
 
+// Mirrors AdminSummary in src/lib/db.ts — not imported directly since that
+// module pulls in Prisma, which isn't safe for a client component.
+interface AdminSummary {
+  activeEmployees: number;
+  pendingManager: number;
+  pendingHr: number;
+  approvedThisMonth: number;
+  totalRequests: number;
+}
+
+const REQUESTS_PAGE_SIZE = 50;
+
 const TYPE_LABELS: Record<string, string> = {
   sick: "Sick Leave",
   casual: "Casual Leave",
@@ -108,14 +120,32 @@ export default function AdminDashboard() {
   >("balances");
   const [employees, setEmployees] = useState<EmployeeWithBalance[]>([]);
   const [allLeaves, setAllLeaves] = useState<LeaveRow[]>([]);
+  const [totalLeaves, setTotalLeaves] = useState(0);
+  const [requestsLoading, setRequestsLoading] = useState(true);
+  const [summary, setSummary] = useState<AdminSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  // Requests tab's own search box — kept separate from `search` above
+  // (Balances tab's, which stays instant/client-side) since this one is
+  // staged behind Apply Changes, not applied on every keystroke.
+  const [reqSearch, setReqSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
   const [filterLeaveType, setFilterLeaveType] = useState("all");
   const [filterDateFrom, setFilterDateFrom] = useState("");
   const [filterDateTo, setFilterDateTo] = useState("");
   const [filterDept, setFilterDept] = useState("all");
   const [filterEmpStatus, setFilterEmpStatus] = useState("all");
+  // What was last actually applied via the Apply Changes button — this,
+  // not the (possibly newer, unapplied) filter state above, is what drives
+  // the requests fetch and what Export CSV/XLSX match.
+  const [appliedFilters, setAppliedFilters] = useState({
+    status: "all",
+    leaveType: "all",
+    dateFrom: "",
+    dateTo: "",
+    search: "",
+  });
+  const [page, setPage] = useState(1);
   const [syncing, setSyncing] = useState(false);
   const [showSyncErrors, setShowSyncErrors] = useState(false);
   const [backingUp, setBackingUp] = useState(false);
@@ -145,18 +175,17 @@ export default function AdminDashboard() {
     }
   }, [status, user, router]);
 
-  const fetchAdminData = () => {
-    return Promise.all([
-      fetch("/api/employees"),
-      fetch("/api/leaves?view=all").then((r) => r.json()),
-    ]).then(async ([empsRes, lvs]) => {
-      const emps = await empsRes.json();
+  const fetchEmployees = () =>
+    fetch("/api/employees").then(async (res) => {
+      const emps = await res.json();
       setEmployees(Array.isArray(emps) ? emps : []);
-      setAllLeaves(Array.isArray(lvs) ? lvs : []);
-      setBalancesUpdatedAt(empsRes.headers.get("X-Cache-Computed-At"));
-      setLoading(false);
+      setBalancesUpdatedAt(res.headers.get("X-Cache-Computed-At"));
     });
-  };
+
+  const fetchSummary = () =>
+    fetch("/api/admin/summary")
+      .then((r) => r.json())
+      .then((data) => setSummary(data));
 
   const handleTypeChange = async (leaveId: string, leaveType: string) => {
     setChangingTypeId(leaveId);
@@ -183,9 +212,46 @@ export default function AdminDashboard() {
   };
 
   useEffect(() => {
-    if (user && (user.role === "admin" || user.role === "manager"))
-      fetchAdminData();
+    if (user && (user.role === "admin" || user.role === "manager")) {
+      Promise.all([fetchEmployees(), fetchSummary()]).then(() =>
+        setLoading(false)
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
+
+  // Requests table — refetches only on mount and whenever Apply Changes or
+  // the page changes, never on keystroke/selection (Neon usage-limit fix:
+  // this used to mean pulling the entire company-wide leave table — 3,100+
+  // rows and growing — on every single Team Details visit).
+  useEffect(() => {
+    if (!user || (user.role !== "admin" && user.role !== "manager")) return;
+    setRequestsLoading(true);
+    const params = new URLSearchParams({ view: "all", page: String(page) });
+    if (appliedFilters.status !== "all") params.set("status", appliedFilters.status);
+    if (appliedFilters.leaveType !== "all") params.set("leaveType", appliedFilters.leaveType);
+    if (appliedFilters.dateFrom) params.set("dateFrom", appliedFilters.dateFrom);
+    if (appliedFilters.dateTo) params.set("dateTo", appliedFilters.dateTo);
+    if (appliedFilters.search) params.set("search", appliedFilters.search);
+    fetch(`/api/leaves?${params.toString()}`)
+      .then((r) => r.json())
+      .then((data) => {
+        setAllLeaves(Array.isArray(data.rows) ? data.rows : []);
+        setTotalLeaves(typeof data.total === "number" ? data.total : 0);
+      })
+      .finally(() => setRequestsLoading(false));
+  }, [user, appliedFilters, page]);
+
+  const handleApplyFilters = () => {
+    setAppliedFilters({
+      status: filterStatus,
+      leaveType: filterLeaveType,
+      dateFrom: filterDateFrom,
+      dateTo: filterDateTo,
+      search: reqSearch.trim(),
+    });
+    setPage(1);
+  };
 
   const handleSync = async () => {
     setSyncing(true);
@@ -202,7 +268,8 @@ export default function AdminDashboard() {
           openingBalancesSynced: data.openingBalancesSynced,
           errors: data.errors || [],
         });
-        fetchAdminData();
+        fetchEmployees();
+        fetchSummary();
       } else {
         setSyncResult({
           employeesSynced: 0,
@@ -245,7 +312,7 @@ export default function AdminDashboard() {
       const res = await fetch("/api/admin/employee-balances-cache", {
         method: "POST",
       });
-      if (res.ok) await fetchAdminData();
+      if (res.ok) await fetchEmployees();
     } catch {
       // Refresh failed silently — the existing cached balances stay
       // displayed and the user can just click Refresh again.
@@ -279,15 +346,17 @@ export default function AdminDashboard() {
       a.status === b.status ? 0 : a.status === "inactive" ? 1 : -1
     );
 
-  // Mirrors filteredLeaves's own predicate as query params, so Export
-  // CSV/XLSX always matches what the All Requests table currently shows
-  // instead of silently dumping every request regardless of filters.
+  // Mirrors appliedFilters (what the All Requests table is actually
+  // showing, i.e. the database's own filtering — see the requests-paging
+  // effect above) as query params, so Export CSV/XLSX always matches what's
+  // on screen instead of silently dumping every request regardless of
+  // filters, or reflecting a filter that's been typed but not yet applied.
   const exportParams = new URLSearchParams();
-  if (filterStatus !== "all") exportParams.set("status", filterStatus);
-  if (filterLeaveType !== "all") exportParams.set("leaveType", filterLeaveType);
-  if (filterDateFrom) exportParams.set("dateFrom", filterDateFrom);
-  if (filterDateTo) exportParams.set("dateTo", filterDateTo);
-  if (search.trim()) exportParams.set("search", search.trim());
+  if (appliedFilters.status !== "all") exportParams.set("status", appliedFilters.status);
+  if (appliedFilters.leaveType !== "all") exportParams.set("leaveType", appliedFilters.leaveType);
+  if (appliedFilters.dateFrom) exportParams.set("dateFrom", appliedFilters.dateFrom);
+  if (appliedFilters.dateTo) exportParams.set("dateTo", appliedFilters.dateTo);
+  if (appliedFilters.search) exportParams.set("search", appliedFilters.search);
   const exportQuery = exportParams.toString() ? `&${exportParams.toString()}` : "";
 
   // Looks up each row's employee ID for the All Requests table, same
@@ -296,20 +365,9 @@ export default function AdminDashboard() {
     employees.map((e) => [e.email.toLowerCase(), e.id])
   );
 
-  const filteredLeaves = allLeaves
-    .filter(
-      (l) =>
-        (filterStatus === "all" || l.status === filterStatus) &&
-        (filterLeaveType === "all" || l.leaveType === filterLeaveType) &&
-        (!filterDateFrom || l.endDate >= filterDateFrom) &&
-        (!filterDateTo || l.startDate <= filterDateTo) &&
-        (l.employeeName.toLowerCase().includes(search.toLowerCase()) ||
-          l.employeeEmail.toLowerCase().includes(search.toLowerCase()))
-    )
-    .sort(
-      (a, b) =>
-        new Date(b.appliedOn).getTime() - new Date(a.appliedOn).getTime()
-    );
+  // allLeaves is already the current filtered/sorted page, served straight
+  // from the database — no client-side filtering left to do.
+  const totalPages = Math.max(1, Math.ceil(totalLeaves / REQUESTS_PAGE_SIZE));
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -403,40 +461,30 @@ export default function AdminDashboard() {
           <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm border-l-4 border-l-indigo-600">
             <p className="text-sm text-gray-500">Active Employees</p>
             <p className="text-2xl font-bold text-gray-900 mt-1">
-              {employees.filter((e) => e.status === "active").length.toLocaleString()}
+              {(summary?.activeEmployees ?? 0).toLocaleString()}
             </p>
           </div>
           <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm border-l-4 border-l-sunrise">
             <p className="text-sm text-gray-500">Pending Requests</p>
             <div className="flex items-center divide-x divide-gray-200 mt-1">
               <p className="text-lg font-bold text-yellow-700 pr-3">
-                Manager - {allLeaves.filter((l) => l.status === "pending").length.toLocaleString()}
+                Manager - {(summary?.pendingManager ?? 0).toLocaleString()}
               </p>
               <p className="text-lg font-bold text-yellow-700 pl-3">
-                HR - {allLeaves.filter((l) => l.status === "manager_approved").length.toLocaleString()}
+                HR - {(summary?.pendingHr ?? 0).toLocaleString()}
               </p>
             </div>
           </div>
           <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm border-l-4 border-l-green-500">
             <p className="text-sm text-gray-500">Approved This Month</p>
             <p className="text-2xl font-bold text-green-700 mt-1">
-              {
-                allLeaves.filter((l) => {
-                  const d = new Date(l.appliedOn);
-                  const now = new Date();
-                  return (
-                    l.status === "approved" &&
-                    d.getMonth() === now.getMonth() &&
-                    d.getFullYear() === now.getFullYear()
-                  );
-                }).length.toLocaleString()
-              }
+              {(summary?.approvedThisMonth ?? 0).toLocaleString()}
             </p>
           </div>
           <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm border-l-4 border-l-magenta">
             <p className="text-sm text-gray-500">Total Requests</p>
             <p className="text-2xl font-bold text-gray-900 mt-1">
-              {allLeaves.length.toLocaleString()}
+              {(summary?.totalRequests ?? 0).toLocaleString()}
             </p>
           </div>
         </div>
@@ -525,8 +573,12 @@ export default function AdminDashboard() {
           <input
             type="text"
             placeholder="Search by name or email..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            value={tab === "requests" ? reqSearch : search}
+            onChange={(e) =>
+              tab === "requests"
+                ? setReqSearch(e.target.value)
+                : setSearch(e.target.value)
+            }
             className="border border-gray-200 rounded-xl px-3 py-2 text-sm w-64 focus:ring-2 focus:ring-indigo-500 bg-white"
           />
           {tab === "balances" && (
@@ -604,15 +656,23 @@ export default function AdminDashboard() {
               />
             </div>
           )}
+          {tab === "requests" && (
+            <button
+              onClick={handleApplyFilters}
+              className="bg-indigo-600 text-white text-sm font-semibold px-4 py-2 rounded-xl hover:bg-indigo-700 transition-colors shadow-sm"
+            >
+              Apply Changes
+            </button>
+          )}
         </div>
         )}
 
         {tab === "requests" && (
           <p className="text-sm text-gray-500 mb-4">
-            {filteredLeaves.length.toLocaleString()} request
-            {filteredLeaves.length === 1 ? "" : "s"}
-            {filterLeaveType !== "all" &&
-              ` under ${TYPE_LABELS[filterLeaveType]}`}
+            {totalLeaves.toLocaleString()} request
+            {totalLeaves === 1 ? "" : "s"}
+            {appliedFilters.leaveType !== "all" &&
+              ` under ${TYPE_LABELS[appliedFilters.leaveType]}`}
           </p>
         )}
 
@@ -735,7 +795,7 @@ export default function AdminDashboard() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {filteredLeaves.map((l) => {
+                {allLeaves.map((l) => {
                   const empId = employeeIdByEmail.get(
                     l.employeeEmail.toLowerCase()
                   );
@@ -802,6 +862,46 @@ export default function AdminDashboard() {
                 })}
               </tbody>
             </table>
+            {requestsLoading ? (
+              <p className="p-6 text-center text-sm text-gray-400">
+                Loading...
+              </p>
+            ) : (
+              allLeaves.length === 0 && (
+                <p className="p-6 text-center text-sm text-gray-400">
+                  No requests match these filters
+                </p>
+              )
+            )}
+          </div>
+        )}
+
+        {tab === "requests" && totalPages > 1 && (
+          <div className="flex items-center justify-between mt-4 text-sm">
+            <span className="text-gray-500">
+              Showing {(page - 1) * REQUESTS_PAGE_SIZE + 1}–
+              {Math.min(page * REQUESTS_PAGE_SIZE, totalLeaves)} of{" "}
+              {totalLeaves.toLocaleString()}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page <= 1 || requestsLoading}
+                className="bg-white border border-gray-200 text-gray-700 font-semibold px-3 py-1.5 rounded-xl hover:border-indigo-300 disabled:opacity-50 transition-colors shadow-sm"
+              >
+                Previous
+              </button>
+              <span className="text-gray-500">
+                Page {page} of {totalPages}
+              </span>
+              <button
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page >= totalPages || requestsLoading}
+                className="bg-white border border-gray-200 text-gray-700 font-semibold px-3 py-1.5 rounded-xl hover:border-indigo-300 disabled:opacity-50 transition-colors shadow-sm"
+              >
+                Next
+              </button>
+            </div>
           </div>
         )}
       </main>

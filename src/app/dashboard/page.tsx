@@ -11,6 +11,7 @@ import {
   formatDate,
   formatDateRange,
   isSingleStageApproval,
+  isResolvedLeaveStatus,
 } from "@/lib/leave-calculator";
 import { EmployeeType, LeaveType } from "@/lib/types";
 
@@ -139,6 +140,10 @@ const HALF_DAY_LABELS: Record<string, string> = {
   second_half: "Second half",
 };
 
+// Matches LEAVE_REQUESTS_PAGE_SIZE in src/lib/db.ts (display-only constant —
+// db.ts is server-only and can't be imported into a client component).
+const REQUESTS_PAGE_SIZE = 50;
+
 const CARD_ACCENTS = [
   "border-l-indigo-600",
   "border-l-magenta",
@@ -221,18 +226,43 @@ export default function Dashboard() {
   const { user, status } = useAuth();
   const router = useRouter();
   const [balanceData, setBalanceData] = useState<BalanceData | null>(null);
+  // Full, unpaginated — needed by the "Taken" balance view below (year
+  // options, per-year totals across the employee's whole history), which is
+  // a separate concern from "My Leave Requests" and its own pagination.
   const [leaves, setLeaves] = useState<Leave[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterLeaveType, setFilterLeaveType] = useState("all");
   const [filterStage, setFilterStage] = useState("all");
   const [filterDateFrom, setFilterDateFrom] = useState("");
   const [filterDateTo, setFilterDateTo] = useState("");
+  // "My Leave Requests" table — paginated/filtered separately from `leaves`
+  // above. Filters stage locally until Apply Changes is clicked.
+  const [myRequests, setMyRequests] = useState<Leave[]>([]);
+  const [myRequestsTotal, setMyRequestsTotal] = useState(0);
+  const [myRequestsLoading, setMyRequestsLoading] = useState(true);
+  const [myPage, setMyPage] = useState(1);
+  const [appliedMyFilters, setAppliedMyFilters] = useState({
+    leaveType: "all",
+    stage: "all",
+    dateFrom: "",
+    dateTo: "",
+  });
   const [balanceView, setBalanceView] = useState<"remaining" | "taken">(
     "remaining"
   );
   const [showCompOff, setShowCompOff] = useState(false);
+  const currentYear = String(new Date().getFullYear());
   const [historyType, setHistoryType] = useState("all");
-  const [historyYear, setHistoryYear] = useState("lifetime");
+  const [historyYear, setHistoryYear] = useState(currentYear);
+  // What was last actually applied via the Taken tab's Apply Changes button
+  // — this, not the (possibly newer, unapplied) dropdown values above, is
+  // what the history table/total are computed from.
+  const [appliedHistoryType, setAppliedHistoryType] = useState("all");
+  const [appliedHistoryYear, setAppliedHistoryYear] = useState(currentYear);
+  const [takenLoading, setTakenLoading] = useState(false);
+  // False until Apply Changes has been clicked at least once — the Taken
+  // tab no longer auto-fetches on mount or on switching to it.
+  const [takenLoaded, setTakenLoaded] = useState(false);
 
   useEffect(() => {
     if (status === "unauthenticated") router.replace("/");
@@ -240,16 +270,77 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (user) {
-      Promise.all([
-        fetch("/api/balance").then((r) => r.json()),
-        fetch("/api/leaves?view=my").then((r) => r.json()),
-      ]).then(([bal, lvs]) => {
-        setBalanceData(bal);
-        setLeaves(Array.isArray(lvs) ? lvs : []);
-        setLoading(false);
-      });
+      fetch("/api/balance")
+        .then((r) => r.json())
+        .then((bal) => {
+          setBalanceData(bal);
+          setLoading(false);
+        });
     }
   }, [user]);
+
+  // "My Leave Requests" — refetches only on mount, on Apply Changes, or on
+  // a page change, never on keystroke/selection.
+  useEffect(() => {
+    if (!user) return;
+    setMyRequestsLoading(true);
+    const params = new URLSearchParams({ view: "my", page: String(myPage) });
+    if (appliedMyFilters.leaveType !== "all")
+      params.set("leaveType", appliedMyFilters.leaveType);
+    if (appliedMyFilters.stage !== "all")
+      params.set("stage", appliedMyFilters.stage);
+    if (appliedMyFilters.dateFrom) params.set("dateFrom", appliedMyFilters.dateFrom);
+    if (appliedMyFilters.dateTo) params.set("dateTo", appliedMyFilters.dateTo);
+    fetch(`/api/leaves?${params.toString()}`)
+      .then((r) => r.json())
+      .then((data) => {
+        setMyRequests(Array.isArray(data.rows) ? data.rows : []);
+        setMyRequestsTotal(typeof data.total === "number" ? data.total : 0);
+      })
+      .finally(() => setMyRequestsLoading(false));
+  }, [user, appliedMyFilters, myPage]);
+
+  const handleApplyMyFilters = () => {
+    setAppliedMyFilters({
+      leaveType: filterLeaveType,
+      stage: filterStage,
+      dateFrom: filterDateFrom,
+      dateTo: filterDateTo,
+    });
+    setMyPage(1);
+  };
+
+  // Taken tab — no auto-fetch at all, including on first switching to the
+  // tab. The full history is fetched once and cached in `leaves`; every
+  // Type/Year change after that just re-filters what's already in memory —
+  // no repeat network call — until Refresh is clicked explicitly.
+  const fetchHistory = () => {
+    setTakenLoading(true);
+    return fetch("/api/leaves?view=my")
+      .then((r) => r.json())
+      .then((lvs) => {
+        setLeaves(Array.isArray(lvs) ? lvs : []);
+        setTakenLoaded(true);
+      })
+      .finally(() => setTakenLoading(false));
+  };
+
+  const applyStagedHistoryFilters = () => {
+    setAppliedHistoryType(historyType);
+    setAppliedHistoryYear(historyYear);
+  };
+
+  const handleApplyHistory = () => {
+    if (takenLoaded) {
+      applyStagedHistoryFilters();
+      return;
+    }
+    fetchHistory().then(applyStagedHistoryFilters);
+  };
+
+  const handleRefreshHistory = () => {
+    fetchHistory().then(applyStagedHistoryFilters);
+  };
 
   if (status === "loading" || loading) {
     return (
@@ -268,7 +359,7 @@ export default function Dashboard() {
       <Navbar />
       <main className="max-w-[96rem] mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Header */}
-        <div className="mb-8 flex items-start justify-between">
+        <div className="mb-8 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">
               Welcome, {employee.name}
@@ -280,7 +371,7 @@ export default function Dashboard() {
           </div>
           <button
             onClick={() => router.push("/apply")}
-            className="bg-indigo-600 text-white text-sm font-semibold px-5 py-2.5 rounded-2xl hover:bg-indigo-700 transition-colors shadow-sm"
+            className="bg-indigo-600 text-white text-sm font-semibold px-5 py-2.5 rounded-2xl hover:bg-indigo-700 transition-colors shadow-sm self-start"
           >
             + Apply Leave
           </button>
@@ -371,18 +462,18 @@ export default function Dashboard() {
           const historyLeaves = leaves
             .filter(
               (l) =>
-                (historyType === "all"
+                (appliedHistoryType === "all"
                   ? allTakenTypes.includes(l.leaveType)
-                  : l.leaveType === historyType) &&
+                  : l.leaveType === appliedHistoryType) &&
                 l.status === "approved" &&
-                daysInYear(l, historyYear) > 0
+                daysInYear(l, appliedHistoryYear) > 0
             )
             .sort(
               (a, b) =>
                 new Date(b.startDate).getTime() - new Date(a.startDate).getTime()
             );
           const historyTotal = historyLeaves.reduce(
-            (sum, l) => sum + daysInYear(l, historyYear),
+            (sum, l) => sum + daysInYear(l, appliedHistoryYear),
             0
           );
 
@@ -474,32 +565,54 @@ export default function Dashboard() {
                           </option>
                         ))}
                       </select>
+                      <button
+                        onClick={handleApplyHistory}
+                        disabled={takenLoading}
+                        className="bg-indigo-600 text-white text-sm font-semibold px-4 py-2 rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors shadow-sm"
+                      >
+                        {takenLoading ? "Loading..." : "Apply Changes"}
+                      </button>
+                      {/* Separate from Apply Changes — that one reuses the
+                          already-fetched/cached history when just switching
+                          Type/Year; this always re-fetches fresh data. */}
+                      <button
+                        onClick={handleRefreshHistory}
+                        disabled={takenLoading}
+                        className="bg-white border border-gray-200 text-gray-700 text-sm font-semibold px-4 py-2 rounded-xl hover:border-indigo-300 disabled:opacity-50 transition-colors shadow-sm"
+                      >
+                        Refresh
+                      </button>
                     </div>
                     <div className="max-w-xl bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-                      {historyLeaves.length === 0 ? (
+                      {!takenLoaded ? (
+                        <p className="p-6 text-center text-sm text-gray-400">
+                          Choose a leave type and year, then click Apply
+                          Changes to view your leave history.
+                        </p>
+                      ) : historyLeaves.length === 0 ? (
                         <p className="p-6 text-center text-sm text-gray-400">
                           No{" "}
-                          {historyType === "all"
+                          {appliedHistoryType === "all"
                             ? "leaves"
-                            : TYPE_LABELS[historyType] || historyType}{" "}
+                            : TYPE_LABELS[appliedHistoryType] || appliedHistoryType}{" "}
                           taken
-                          {historyYear === "lifetime" ? "" : ` in ${historyYear}`}
+                          {appliedHistoryYear === "lifetime" ? "" : ` in ${appliedHistoryYear}`}
                         </p>
                       ) : (
                         <>
                           <div className="px-4 py-2 text-xs font-medium text-gray-500 bg-gray-50/50 border-b border-gray-100">
                             {historyTotal} day{historyTotal === 1 ? "" : "s"}{" "}
                             taken
-                            {historyYear === "lifetime" ? "" : ` in ${historyYear}`}
+                            {appliedHistoryYear === "lifetime" ? "" : ` in ${appliedHistoryYear}`}
                           </div>
                           <div
                             className={`grid gap-3 px-4 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wide border-b border-gray-100 text-center ${
-                              historyType === "all"
+                              appliedHistoryType === "all"
                                 ? "grid-cols-[0.8fr_1.2fr_1fr_0.6fr]"
                                 : "grid-cols-[1.4fr_1fr_0.6fr]"
                             }`}
                           >
-                            {historyType === "all" && <span>Type</span>}
+                            {appliedHistoryType === "all" && <span>Type</span>}
                             <span>Dates</span>
                             <span>Applied On</span>
                             <span>Days</span>
@@ -509,12 +622,12 @@ export default function Dashboard() {
                               <div
                                 key={l.id}
                                 className={`grid gap-3 items-center px-4 py-3 text-sm text-center ${
-                                  historyType === "all"
+                                  appliedHistoryType === "all"
                                     ? "grid-cols-[0.8fr_1.2fr_1fr_0.6fr]"
                                     : "grid-cols-[1.4fr_1fr_0.6fr]"
                                 }`}
                               >
-                                {historyType === "all" && (
+                                {appliedHistoryType === "all" && (
                                   <span className="text-gray-600">
                                     {TYPE_LABELS[l.leaveType] || l.leaveType}
                                   </span>
@@ -526,7 +639,7 @@ export default function Dashboard() {
                                   {formatDate(l.appliedOn)}
                                 </span>
                                 <span className="text-gray-500">
-                                  {daysInYear(l, historyYear)}
+                                  {daysInYear(l, appliedHistoryYear)}
                                 </span>
                               </div>
                             ))}
@@ -571,7 +684,7 @@ export default function Dashboard() {
               <option value="Approved">Approved</option>
               <option value="Rejected">Rejected</option>
             </select>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <input
                 type="date"
                 value={filterDateFrom}
@@ -592,29 +705,30 @@ export default function Dashboard() {
                 aria-label="Leave dates on or before"
               />
             </div>
+            <button
+              onClick={handleApplyMyFilters}
+              className="bg-indigo-600 text-white text-sm font-semibold px-4 py-2 rounded-xl hover:bg-indigo-700 transition-colors shadow-sm"
+            >
+              Apply Changes
+            </button>
           </div>
         </div>
 
         {(() => {
-          const filteredLeaves = leaves.filter((l) => {
-            const stage = STAGE_LABELS[l.status] || l.status;
-            return (
-              (filterLeaveType === "all" || l.leaveType === filterLeaveType) &&
-              (filterStage === "all" || stage === filterStage) &&
-              (!filterDateFrom || l.endDate >= filterDateFrom) &&
-              (!filterDateTo || l.startDate <= filterDateTo)
-            );
-          });
-
-          return filteredLeaves.length === 0 ? (
+          const noFiltersApplied =
+            appliedMyFilters.leaveType === "all" &&
+            appliedMyFilters.stage === "all" &&
+            !appliedMyFilters.dateFrom &&
+            !appliedMyFilters.dateTo;
+          return myRequestsTotal === 0 && !myRequestsLoading ? (
           <div className="bg-white rounded-2xl border border-gray-100 p-10 text-center text-gray-400 shadow-sm">
-            {leaves.length === 0
+            {noFiltersApplied
               ? "No leave requests yet"
               : "No leave requests match these filters"}
           </div>
         ) : (
-          <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-sm">
-            <table className="w-full text-sm">
+          <div className="bg-white rounded-2xl border border-gray-100 overflow-x-auto shadow-sm">
+            <table className="w-full text-sm min-w-[640px]">
               <thead className="bg-indigo-50/50 border-b border-gray-100">
                 <tr>
                   <th className="text-left px-4 py-3 font-semibold text-indigo-900/70">
@@ -641,12 +755,7 @@ export default function Dashboard() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {filteredLeaves
-                  .sort(
-                    (a, b) =>
-                      new Date(b.appliedOn).getTime() -
-                      new Date(a.appliedOn).getTime()
-                  )
+                {myRequests
                   .map((leave) => {
                     const stage = STAGE_LABELS[leave.status] || leave.status;
                     const singleStage = isSingleStageApproval(
@@ -715,6 +824,7 @@ export default function Dashboard() {
                             leaveId={leave.id}
                             currentUserEmail={user?.email || ""}
                             hideIfEmpty
+                            locked={isResolvedLeaveStatus(leave.status)}
                           />
                         </td>
                       </tr>
@@ -723,9 +833,54 @@ export default function Dashboard() {
                   })}
               </tbody>
             </table>
+            {myRequestsLoading && (
+              <p className="p-6 text-center text-sm text-gray-400">
+                Loading...
+              </p>
+            )}
           </div>
           );
         })()}
+
+        {myRequestsTotal > REQUESTS_PAGE_SIZE && (
+          <div className="flex items-center justify-between mt-4 text-sm">
+            <span className="text-gray-500">
+              Showing {(myPage - 1) * REQUESTS_PAGE_SIZE + 1}–
+              {Math.min(myPage * REQUESTS_PAGE_SIZE, myRequestsTotal)} of{" "}
+              {myRequestsTotal.toLocaleString()}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setMyPage((p) => Math.max(1, p - 1))}
+                disabled={myPage <= 1 || myRequestsLoading}
+                className="bg-white border border-gray-200 text-gray-700 font-semibold px-3 py-1.5 rounded-xl hover:border-indigo-300 disabled:opacity-50 transition-colors shadow-sm"
+              >
+                Previous
+              </button>
+              <span className="text-gray-500">
+                Page {myPage} of{" "}
+                {Math.max(1, Math.ceil(myRequestsTotal / REQUESTS_PAGE_SIZE))}
+              </span>
+              <button
+                onClick={() =>
+                  setMyPage((p) =>
+                    Math.min(
+                      Math.max(1, Math.ceil(myRequestsTotal / REQUESTS_PAGE_SIZE)),
+                      p + 1
+                    )
+                  )
+                }
+                disabled={
+                  myPage >= Math.ceil(myRequestsTotal / REQUESTS_PAGE_SIZE) ||
+                  myRequestsLoading
+                }
+                className="bg-white border border-gray-200 text-gray-700 font-semibold px-3 py-1.5 rounded-xl hover:border-indigo-300 disabled:opacity-50 transition-colors shadow-sm"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
         </>
         )}
       </main>

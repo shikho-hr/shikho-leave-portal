@@ -566,10 +566,12 @@ export async function createHoliday(date: string, name: string): Promise<void> {
     create: { date: strToDateRequired(date), name },
     update: { name },
   });
+  await refreshHolidaysCache();
 }
 
 export async function deleteHoliday(date: string): Promise<void> {
   await prisma.holiday.delete({ where: { date: strToDateRequired(date) } });
+  await refreshHolidaysCache();
 }
 
 // ── Working weekends (a Friday/Saturday that's a working day) ───
@@ -586,10 +588,12 @@ export async function createWorkingWeekend(date: string): Promise<void> {
     create: { date: strToDateRequired(date) },
     update: {},
   });
+  await refreshHolidaysCache();
 }
 
 export async function deleteWorkingWeekend(date: string): Promise<void> {
   await prisma.workingWeekend.delete({ where: { date: strToDateRequired(date) } });
+  await refreshHolidaysCache();
 }
 
 // ── Opening / carry-forward balances ────────────────────────────
@@ -703,6 +707,137 @@ export async function getLeaveRequests(): Promise<LeaveRequest[]> {
   return rows.map(rowToLeaveRequest);
 }
 
+// ── Paginated/filtered leave requests — Team Details' "All Requests" table
+// ──
+// Server-side counterpart of what that table used to do by pulling every
+// row (getLeaveRequests()) and filtering/paging in the browser. All four
+// filters are applied here as an indexed `where` clause instead.
+
+export interface LeaveRequestFilters {
+  status?: string; // exact match
+  leaveType?: string; // exact match
+  dateFrom?: string; // endDate >= dateFrom
+  dateTo?: string; // startDate <= dateTo
+  search?: string; // employeeName/employeeEmail, case-insensitive contains
+}
+
+export const LEAVE_REQUESTS_PAGE_SIZE = 50;
+
+function buildLeaveRequestWhere(
+  filters: LeaveRequestFilters
+): Prisma.LeaveWhereInput {
+  const where: Prisma.LeaveWhereInput = {};
+  if (filters.status) where.status = filters.status;
+  if (filters.leaveType) where.leaveType = filters.leaveType;
+  if (filters.dateFrom) where.endDate = { gte: strToDateRequired(filters.dateFrom) };
+  if (filters.dateTo) where.startDate = { lte: strToDateRequired(filters.dateTo) };
+  const search = filters.search?.trim();
+  if (search) {
+    where.OR = [
+      { employeeName: { contains: search, mode: "insensitive" } },
+      { employeeEmail: { contains: search, mode: "insensitive" } },
+    ];
+  }
+  return where;
+}
+
+// Admin — company-wide.
+export async function getLeaveRequestsPaged(
+  filters: LeaveRequestFilters,
+  page: number
+): Promise<{ rows: LeaveRequest[]; total: number }> {
+  const where = buildLeaveRequestWhere(filters);
+  const [rows, total] = await Promise.all([
+    prisma.leave.findMany({
+      where,
+      // id as a tiebreaker — many bulk-imported rows share the exact same
+      // appliedOn timestamp, and appliedOn alone has no guaranteed stable
+      // order among ties, which would make paging unreliable (a row could
+      // repeat on the next page, or get skipped entirely).
+      orderBy: [{ appliedOn: "desc" }, { id: "desc" }],
+      skip: (page - 1) * LEAVE_REQUESTS_PAGE_SIZE,
+      take: LEAVE_REQUESTS_PAGE_SIZE,
+    }),
+    prisma.leave.count({ where }),
+  ]);
+  return { rows: rows.map(rowToLeaveRequest), total };
+}
+
+// Manager — reportee-scoped (same email list getLeavesByEmployees() takes).
+export async function getLeavesByEmployeesPaged(
+  emails: string[],
+  filters: LeaveRequestFilters,
+  page: number
+): Promise<{ rows: LeaveRequest[]; total: number }> {
+  if (emails.length === 0) return { rows: [], total: 0 };
+  const where: Prisma.LeaveWhereInput = {
+    ...buildLeaveRequestWhere(filters),
+    employeeEmail: { in: emails },
+  };
+  const [rows, total] = await Promise.all([
+    prisma.leave.findMany({
+      where,
+      orderBy: [{ appliedOn: "desc" }, { id: "desc" }],
+      skip: (page - 1) * LEAVE_REQUESTS_PAGE_SIZE,
+      take: LEAVE_REQUESTS_PAGE_SIZE,
+    }),
+    prisma.leave.count({ where }),
+  ]);
+  return { rows: rows.map(rowToLeaveRequest), total };
+}
+
+// Team Details' 4 summary cards. Plain COUNT()/aggregate queries — fast
+// regardless of table size thanks to the existing indexes, unlike
+// roster/balance which involve real per-employee computation, so this
+// doesn't need a cache table the way those do. Company-wide when
+// managerEmail is omitted (admin); reportee-scoped (active reportees only,
+// same set Team Details' own tables already use) when given.
+export interface AdminSummary {
+  activeEmployees: number;
+  pendingManager: number;
+  pendingHr: number;
+  approvedThisMonth: number;
+  totalRequests: number;
+}
+
+export async function computeAdminSummary(
+  managerEmail?: string
+): Promise<AdminSummary> {
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+
+  const employeeWhere: Prisma.EmployeeWhereInput = managerEmail
+    ? { managerEmail: managerEmail.toLowerCase(), status: "active" }
+    : { status: "active" };
+
+  const leaveScope: Prisma.LeaveWhereInput = managerEmail
+    ? { employee: { managerEmail: managerEmail.toLowerCase(), status: "active" } }
+    : {};
+
+  const [
+    activeEmployees,
+    pendingManager,
+    pendingHr,
+    approvedThisMonth,
+    totalRequests,
+  ] = await Promise.all([
+    prisma.employee.count({ where: employeeWhere }),
+    prisma.leave.count({ where: { ...leaveScope, status: "pending" } }),
+    prisma.leave.count({ where: { ...leaveScope, status: "manager_approved" } }),
+    prisma.leave.count({
+      where: {
+        ...leaveScope,
+        status: "approved",
+        appliedOn: { gte: monthStart, lt: nextMonthStart },
+      },
+    }),
+    prisma.leave.count({ where: leaveScope }),
+  ]);
+
+  return { activeEmployees, pendingManager, pendingHr, approvedThisMonth, totalRequests };
+}
+
 export async function getLeaveById(
   leaveId: string
 ): Promise<LeaveRequest | null> {
@@ -718,6 +853,42 @@ export async function getLeavesByEmployee(
     orderBy: { appliedOn: "desc" },
   });
   return rows.map(rowToLeaveRequest);
+}
+
+// Paginated/filtered "My Leave Requests" (Dashboard). `stage` mirrors the
+// UI's derived label, not the raw status column — "Pending" covers both
+// "pending" and "manager_approved" (same STAGE_LABELS grouping the client
+// used to apply itself), "Approved"/"Rejected" map straight to their status.
+export interface MyLeaveRequestFilters {
+  leaveType?: string;
+  stage?: "Pending" | "Approved" | "Rejected";
+  dateFrom?: string; // endDate >= dateFrom
+  dateTo?: string; // startDate <= dateTo
+}
+
+export async function getLeavesByEmployeePaged(
+  email: string,
+  filters: MyLeaveRequestFilters,
+  page: number
+): Promise<{ rows: LeaveRequest[]; total: number }> {
+  const where: Prisma.LeaveWhereInput = { employeeEmail: email.toLowerCase() };
+  if (filters.leaveType) where.leaveType = filters.leaveType;
+  if (filters.stage === "Pending") where.status = { in: ["pending", "manager_approved"] };
+  else if (filters.stage === "Approved") where.status = "approved";
+  else if (filters.stage === "Rejected") where.status = "rejected";
+  if (filters.dateFrom) where.endDate = { gte: strToDateRequired(filters.dateFrom) };
+  if (filters.dateTo) where.startDate = { lte: strToDateRequired(filters.dateTo) };
+
+  const [rows, total] = await Promise.all([
+    prisma.leave.findMany({
+      where,
+      orderBy: [{ appliedOn: "desc" }, { id: "desc" }],
+      skip: (page - 1) * LEAVE_REQUESTS_PAGE_SIZE,
+      take: LEAVE_REQUESTS_PAGE_SIZE,
+    }),
+    prisma.leave.count({ where }),
+  ]);
+  return { rows: rows.map(rowToLeaveRequest), total };
 }
 
 export async function getLeavesByStatus(
@@ -1028,6 +1199,50 @@ export async function getCachedAvailableLeaveTypes(): Promise<{
     data: row.data as unknown as Record<string, LeaveType[]>,
     computedAt: row.computedAt,
   };
+}
+
+// ── Holidays cache ───────────────────────────────────────────────
+// GET /api/holidays (the Apply page's date calculations) - read by every
+// employee on every visit, changes only through the four admin mutations
+// below, so each of those refreshes it inline instead of waiting on a cron.
+
+export interface HolidaysData {
+  dates: string[];
+  workingWeekendDates: string[];
+}
+
+export async function computeHolidaysData(): Promise<HolidaysData> {
+  const [holidays, workingWeekends] = await Promise.all([
+    getHolidays(),
+    getWorkingWeekends(),
+  ]);
+  return {
+    dates: holidays.map((h) => h.date),
+    workingWeekendDates: workingWeekends,
+  };
+}
+
+export async function refreshHolidaysCache(): Promise<{
+  data: HolidaysData;
+  computedAt: Date;
+}> {
+  const data = await computeHolidaysData();
+  const jsonData = data as unknown as Prisma.InputJsonValue;
+  const row = await prisma.holidaysCache.upsert({
+    where: { id: "admin" },
+    create: { id: "admin", data: jsonData },
+    update: { data: jsonData, computedAt: new Date() },
+  });
+  return { data, computedAt: row.computedAt };
+}
+
+export async function getCachedHolidays(): Promise<{
+  data: HolidaysData;
+  computedAt: Date;
+} | null> {
+  const row = await prisma.holidaysCache.findUnique({ where: { id: "admin" } });
+  if (!row) return null;
+  return { data: row.data as unknown as HolidaysData, computedAt: row.computedAt };
 }
 
 // Approved leaves whose date range overlaps [rangeStart, rangeEnd] — used

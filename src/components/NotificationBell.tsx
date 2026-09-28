@@ -69,10 +69,9 @@ export default function NotificationBell({
 
   useEffect(() => {
     fetchNotifications();
-    // Polling, not a live push — consistent with the rest of the app,
-    // which has no real-time Firestore listeners anywhere.
-    const interval = setInterval(fetchNotifications, 30000);
-    return () => clearInterval(interval);
+    // No polling — refetched only on mount, on opening the dropdown, and via
+    // the Refresh link inside it. Keeps this from hitting the database every
+    // 30s from every open tab across the whole app (Neon usage-limit fix).
   }, []);
 
   useEffect(() => {
@@ -121,7 +120,14 @@ export default function NotificationBell({
     <>
       <div className="relative" onClick={(e) => e.stopPropagation()}>
         <button
-          onClick={() => setOpen((o) => !o)}
+          onClick={() =>
+            setOpen((o) => {
+              const next = !o;
+              // Opening the dropdown is the "manual refresh" — no interval.
+              if (next) fetchNotifications();
+              return next;
+            })
+          }
           className="relative text-indigo-100 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-colors"
           aria-label="Notifications"
         >
@@ -146,9 +152,17 @@ export default function NotificationBell({
         </button>
 
         {open && (
-          <div className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden z-50">
-            <div className="px-4 py-3 border-b border-gray-100 font-semibold text-gray-900 text-sm">
-              Notifications
+          <div className="absolute right-0 mt-2 w-80 max-w-[calc(100vw-2rem)] bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden z-50">
+            <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+              <span className="font-semibold text-gray-900 text-sm">
+                Notifications
+              </span>
+              <button
+                onClick={fetchNotifications}
+                className="text-xs font-semibold text-indigo-600 hover:text-indigo-800"
+              >
+                Refresh
+              </button>
             </div>
             <div className="max-h-96 overflow-y-auto divide-y divide-gray-50">
               {notifications.length === 0 ? (

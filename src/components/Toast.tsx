@@ -17,7 +17,7 @@ export default function Toast({ message, type = "success", onClose }: ToastProps
   const isDanger = type === "danger";
 
   return (
-    <div className="fixed top-20 right-6 z-[60]">
+    <div className="fixed top-20 left-4 right-4 sm:left-auto sm:right-6 z-[60] flex justify-end">
       <div
         className={`flex items-center gap-3 rounded-2xl px-4 py-3 shadow-lg text-sm font-semibold text-white ${
           isDanger ? "bg-coral" : "bg-green-600"

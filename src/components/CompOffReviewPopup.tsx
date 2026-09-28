@@ -107,8 +107,11 @@ export default function CompOffReviewPopup({
         onClick={(e) => e.stopPropagation()}
         className="bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden"
         style={{
-          width: "clamp(340px, 39.6vw, 780px)",
-          height: "clamp(300px, 44vh, 600px)",
+          // The outer min() guards against viewports narrower than the
+          // 340px floor (e.g. phones under ~375px wide), where the raw
+          // clamp would overflow past the backdrop's p-4 edge padding.
+          width: "min(clamp(340px, 39.6vw, 780px), calc(100vw - 2rem))",
+          height: "min(clamp(300px, 44vh, 600px), calc(100vh - 2rem))",
         }}
       >
         <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 flex-none">

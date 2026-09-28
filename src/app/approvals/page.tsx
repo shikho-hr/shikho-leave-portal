@@ -8,7 +8,7 @@ import CommentThread from "@/components/CommentThread";
 import InternalNoteThread from "@/components/InternalNoteThread";
 import Toast from "@/components/Toast";
 import CompOffApprovalQueue from "@/components/CompOffApprovalQueue";
-import { formatDate, formatDateRange } from "@/lib/leave-calculator";
+import { formatDate, formatDateRange, isResolvedLeaveStatus } from "@/lib/leave-calculator";
 
 interface PendingLeave {
   id: string;
@@ -191,42 +191,49 @@ function ApprovalsContent() {
     };
   }, [searchParams]);
 
+  const fetchPending = () =>
+    fetch("/api/leaves?view=pending")
+      .then((r) => r.json())
+      .then((data) => setPendingLeaves(Array.isArray(data) ? data : []));
+
+  // History — every request this manager/HR can see, at any stage, so
+  // approved/rejected requests don't just disappear once actioned.
+  const fetchHistory = () =>
+    fetch("/api/leaves?view=all")
+      .then((r) => r.json())
+      .then((data) => setHistoryLeaves(Array.isArray(data) ? data : []));
+
+  const fetchHr = () =>
+    fetch("/api/leaves?view=hr")
+      .then((r) => r.json())
+      .then((data) => setHrLeaves(Array.isArray(data) ? data : []));
+
   const fetchLeaves = () => {
-    const fetches: Promise<void>[] = [
-      fetch("/api/leaves?view=pending")
-        .then((r) => r.json())
-        .then((data) =>
-          setPendingLeaves(Array.isArray(data) ? data : [])
-        ),
-      // History — every request this manager/HR can see, at any stage, so
-      // approved/rejected requests don't just disappear once actioned.
-      fetch("/api/leaves?view=all")
-        .then((r) => r.json())
-        .then((data) => setHistoryLeaves(Array.isArray(data) ? data : [])),
-    ];
-
-    if (isAdmin) {
-      fetches.push(
-        fetch("/api/leaves?view=hr")
-          .then((r) => r.json())
-          .then((data) => setHrLeaves(Array.isArray(data) ? data : []))
-      );
-    }
-
+    const fetches: Promise<void>[] = [fetchPending(), fetchHistory()];
+    if (isAdmin) fetches.push(fetchHr());
     Promise.all(fetches).then(() => setLoading(false));
   };
 
   useEffect(() => {
     if (!user) return;
     fetchLeaves();
-    // Polling, same as the Notification Bell and nav badge — this page
-    // otherwise only ever fetches once on load, so a request submitted or
-    // actioned by someone else while you're sitting on this page wouldn't
-    // show up until a manual refresh.
-    const interval = setInterval(fetchLeaves, 30000);
-    return () => clearInterval(interval);
+    // No polling — this page otherwise only fetches once on load, so a
+    // request submitted or actioned by someone else while you're sitting on
+    // this page won't show up until the Refresh button is clicked (Neon
+    // usage-limit fix: this used to hit the database every 30s).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
+
+  // Scoped to whichever tab is showing, not the whole page — no point
+  // re-fetching all three leave views plus the comp-off queue when you're
+  // only looking at one of them.
+  const [refreshKey, setRefreshKey] = useState(0);
+  const handleRefresh = () => {
+    if (tab === "pending") fetchPending();
+    else if (tab === "hr" && isAdmin) fetchHr();
+    else if (tab === "history") fetchHistory();
+    else if (tab === "compoff") setRefreshKey((k) => k + 1);
+  };
 
   const handleAction = async (
     leaveId: string,
@@ -363,11 +370,11 @@ function ApprovalsContent() {
           : "border-gray-100"
       }`}
     >
-      <div className="flex items-start justify-between mb-3">
+      <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
         <div>
           <p className="font-semibold text-gray-900">{leave.employeeName}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {tab === "hr" &&
             (leave.status === "manager_approved" ? (
               <span className="text-xs text-indigo-700 bg-indigo-50 px-2 py-1 rounded-lg font-medium">
@@ -429,10 +436,18 @@ function ApprovalsContent() {
       </div>
 
       {/* Comment thread */}
-      <CommentThread leaveId={leave.id} currentUserEmail={user?.email || ""} />
+      <CommentThread
+        leaveId={leave.id}
+        currentUserEmail={user?.email || ""}
+        locked={isResolvedLeaveStatus(leave.status)}
+      />
 
       {/* Internal notes — manager/admin only, employee never sees this */}
-      <InternalNoteThread leaveId={leave.id} currentUserEmail={user?.email || ""} />
+      <InternalNoteThread
+        leaveId={leave.id}
+        currentUserEmail={user?.email || ""}
+        locked={isResolvedLeaveStatus(leave.status)}
+      />
 
       {tab === "history" ? (
         <div className="flex items-center justify-between mt-4 pt-3 border-t border-gray-100">
@@ -454,7 +469,7 @@ function ApprovalsContent() {
         </div>
       ) : (
         /* Action buttons */
-        <div className="flex items-end gap-3 mt-4 pt-3 border-t border-gray-100">
+        <div className="flex flex-col sm:flex-row sm:items-end gap-3 mt-4 pt-3 border-t border-gray-100">
           <div className="flex-1">
             <input
               type="text"
@@ -477,20 +492,22 @@ function ApprovalsContent() {
               <p className="text-xs text-coral mt-1">{errors[leave.id]}</p>
             )}
           </div>
-          <button
-            onClick={() => handleAction(leave.id, "approved")}
-            disabled={actionId === leave.id}
-            className="bg-green-600 text-white text-sm font-semibold px-5 py-2 rounded-xl hover:bg-green-700 disabled:opacity-50 transition-colors"
-          >
-            {approveLabel}
-          </button>
-          <button
-            onClick={() => handleAction(leave.id, "rejected")}
-            disabled={actionId === leave.id}
-            className="bg-coral text-white text-sm font-semibold px-5 py-2 rounded-xl hover:opacity-90 disabled:opacity-50 transition-colors"
-          >
-            Reject
-          </button>
+          <div className="flex gap-3">
+            <button
+              onClick={() => handleAction(leave.id, "approved")}
+              disabled={actionId === leave.id}
+              className="flex-1 sm:flex-none bg-green-600 text-white text-sm font-semibold px-5 py-2 rounded-xl hover:bg-green-700 disabled:opacity-50 transition-colors"
+            >
+              {approveLabel}
+            </button>
+            <button
+              onClick={() => handleAction(leave.id, "rejected")}
+              disabled={actionId === leave.id}
+              className="flex-1 sm:flex-none bg-coral text-white text-sm font-semibold px-5 py-2 rounded-xl hover:opacity-90 disabled:opacity-50 transition-colors"
+            >
+              Reject
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -507,12 +524,20 @@ function ApprovalsContent() {
         />
       )}
       <main className="max-w-3xl mx-auto px-4 py-8">
-        <h1 className="text-2xl font-bold text-gray-900 mb-6">
-          Leave Requests
-        </h1>
+        <div className="flex items-center justify-between gap-3 mb-6">
+          <h1 className="text-2xl font-bold text-gray-900">
+            Leave Requests
+          </h1>
+          <button
+            onClick={handleRefresh}
+            className="bg-white border border-gray-200 text-gray-700 text-sm font-semibold px-4 py-2 rounded-xl hover:border-indigo-300 transition-colors shadow-sm"
+          >
+            Refresh
+          </button>
+        </div>
 
         {/* Tabs */}
-        <div className="flex gap-1 mb-6">
+        <div className="flex flex-wrap gap-2 mb-6">
           <button
             onClick={() => setTab("pending")}
             className={`px-5 py-2 rounded-xl text-sm font-semibold transition-colors ${
@@ -607,7 +632,7 @@ function ApprovalsContent() {
             <option value="approved">Approved</option>
             <option value="rejected">Rejected</option>
           </select>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <input
               type="date"
               value={filterDateFrom}
@@ -640,6 +665,7 @@ function ApprovalsContent() {
             <CompOffApprovalQueue
               onCountChange={setCompOffCount}
               onToast={(message, type) => setToast({ message, type })}
+              refreshKey={refreshKey}
             />
           </>
         ) : filteredLeaves.length === 0 ? (

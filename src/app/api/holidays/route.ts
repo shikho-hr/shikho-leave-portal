@@ -1,17 +1,15 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import { getHolidays, getWorkingWeekends } from "@/lib/db";
+import { getCachedHolidays, refreshHolidaysCache } from "@/lib/db";
 
 export async function GET() {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const [holidays, workingWeekends] = await Promise.all([
-    getHolidays(),
-    getWorkingWeekends(),
-  ]);
-  return NextResponse.json({
-    dates: holidays.map((h) => h.date),
-    workingWeekendDates: workingWeekends,
-  });
+  // Cold-start fallback: populate the cache once if it's never been written
+  // (e.g. right after the migration), same pattern as the other singleton
+  // caches. Every subsequent read is served from the cache row instead of
+  // querying Holiday/WorkingWeekend live.
+  const cached = (await getCachedHolidays()) ?? (await refreshHolidaysCache());
+  return NextResponse.json(cached.data);
 }

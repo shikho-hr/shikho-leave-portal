@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import CommentThread from "./CommentThread";
 import InternalNoteThread from "./InternalNoteThread";
 import { useAuth } from "@/lib/AuthContext";
-import { formatDateRange } from "@/lib/leave-calculator";
+import { formatDateRange, isResolvedLeaveStatus } from "@/lib/leave-calculator";
 
 interface LeaveDetail {
   id: string;
@@ -95,9 +95,12 @@ export default function LeavePopup({
         className="bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden"
         style={{
           // ~760x400 on a 1920x1080 screen (39.6vw / 37vh), clamped so it
-          // stays usable on much smaller or larger viewports.
-          width: "clamp(340px, 39.6vw, 900px)",
-          height: "clamp(280px, 37vh, 620px)",
+          // stays usable on much smaller or larger viewports. The outer
+          // min() guards against viewports narrower than the 340px floor
+          // (e.g. phones under ~375px wide), where the raw clamp would
+          // overflow past the backdrop's p-4 edge padding.
+          width: "min(clamp(340px, 39.6vw, 900px), calc(100vw - 2rem))",
+          height: "min(clamp(280px, 37vh, 620px), calc(100vh - 2rem))",
         }}
       >
         <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 flex-none">
@@ -131,7 +134,7 @@ export default function LeavePopup({
                 </span>
               </div>
 
-              <div className="grid grid-cols-3 gap-3 text-sm mb-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm mb-4">
                 <div>
                   <p className="text-gray-400 text-xs uppercase tracking-wide">
                     Type
@@ -172,12 +175,14 @@ export default function LeavePopup({
                   leaveId={leave.id}
                   currentUserEmail={currentUserEmail}
                   initialExpanded={!isInternalNote}
+                  locked={isResolvedLeaveStatus(leave.status)}
                 />
                 {canSeeInternalNotes && (
                   <InternalNoteThread
                     leaveId={leave.id}
                     currentUserEmail={currentUserEmail}
                     initialExpanded={isInternalNote}
+                    locked={isResolvedLeaveStatus(leave.status)}
                   />
                 )}
               </div>

@@ -16,6 +16,7 @@ export default function CommentThread({
   currentUserEmail,
   hideIfEmpty = false,
   initialExpanded = false,
+  locked = false,
 }: {
   leaveId: string;
   currentUserEmail: string;
@@ -28,6 +29,10 @@ export default function CommentThread({
   // Opens already expanded — used by the notification popup, where the
   // whole point of opening it was to read the comment that triggered it.
   initialExpanded?: boolean;
+  // True once the leave is approved/rejected — the API rejects new comments
+  // at that point (see isResolvedLeaveStatus), so the input is hidden rather
+  // than left there to fail on submit.
+  locked?: boolean;
 }) {
   const [comments, setComments] = useState<Comment[]>([]);
   const [newComment, setNewComment] = useState("");
@@ -132,24 +137,27 @@ export default function CommentThread({
             ))
           )}
 
-          {/* Add comment */}
-          <div className="flex gap-2 pt-1">
-            <input
-              type="text"
-              placeholder="Add a comment..."
-              value={newComment}
-              onChange={(e) => setNewComment(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
-              className="flex-1 border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs focus:ring-1 focus:ring-indigo-500 bg-gray-50/50"
-            />
-            <button
-              onClick={handleSubmit}
-              disabled={sending || !newComment.trim()}
-              className="text-xs font-semibold text-white bg-indigo-600 px-3 py-1.5 rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
-            >
-              {sending ? "..." : "Send"}
-            </button>
-          </div>
+          {/* Add comment — hidden once the leave is decided; the thread is
+              closed at that point (see isResolvedLeaveStatus). */}
+          {!locked && (
+            <div className="flex gap-2 pt-1">
+              <input
+                type="text"
+                placeholder="Add a comment..."
+                value={newComment}
+                onChange={(e) => setNewComment(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+                className="flex-1 border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs focus:ring-1 focus:ring-indigo-500 bg-gray-50/50"
+              />
+              <button
+                onClick={handleSubmit}
+                disabled={sending || !newComment.trim()}
+                className="text-xs font-semibold text-white bg-indigo-600 px-3 py-1.5 rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+              >
+                {sending ? "..." : "Send"}
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -132,11 +132,14 @@ export default function CompOffPopup({
         onClick={(e) => e.stopPropagation()}
         className="bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden"
         style={{
-          width: "clamp(340px, 44vw, 900px)",
-          height: "clamp(320px, 52vh, 680px)",
+          // The outer min() guards against viewports narrower than the
+          // 340px floor (e.g. phones under ~375px wide), where the raw
+          // clamp would overflow past the backdrop's p-4 edge padding.
+          width: "min(clamp(340px, 44vw, 900px), calc(100vw - 2rem))",
+          height: "min(clamp(320px, 52vh, 680px), calc(100vh - 2rem))",
         }}
       >
-        <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100 flex-none">
+        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-b border-gray-100 flex-none">
           <h2 className="font-semibold text-gray-900">
             Compensatory Off
             {summary && (
@@ -190,7 +193,8 @@ export default function CompOffPopup({
                   approve it.
                 </p>
               ) : (
-                <table className="w-full text-sm">
+                <div className="overflow-x-auto">
+                <table className="w-full text-sm min-w-[420px]">
                   <thead className="bg-indigo-50/50 border-b border-gray-100">
                     <tr>
                       <th className="text-left px-3 py-2 font-semibold text-indigo-900/70 whitespace-nowrap">
@@ -228,6 +232,7 @@ export default function CompOffPopup({
                     ))}
                   </tbody>
                 </table>
+                </div>
               )}
 
               {recording ? (

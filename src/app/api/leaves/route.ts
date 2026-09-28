@@ -4,6 +4,11 @@ import { isSystemAdmin } from "@/lib/system-admin";
 import {
   getLeavesByEmployee,
   getLeavesByEmployees,
+  getLeavesByEmployeePaged,
+  MyLeaveRequestFilters,
+  getLeaveRequestsPaged,
+  getLeavesByEmployeesPaged,
+  LeaveRequestFilters,
   getEmployeesByManager,
   getPendingLeavesForManager,
   getLeaveRequests,
@@ -62,6 +67,36 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(leaves);
     }
 
+    // Paginated/filtered variant — opt-in via ?page=, used by Team Details'
+    // "All Requests" table. Everything below (the bare-array branches) stays
+    // exactly as-is for callers that don't pass page, e.g. Approvals' own
+    // History tab, which also hits ?view=all.
+    if (
+      view === "all" &&
+      (user.role === "admin" || user.role === "manager") &&
+      searchParams.get("page")
+    ) {
+      const page = Math.max(1, parseInt(searchParams.get("page")!, 10) || 1);
+      const filters: LeaveRequestFilters = {
+        status: searchParams.get("status") || undefined,
+        leaveType: searchParams.get("leaveType") || undefined,
+        dateFrom: searchParams.get("dateFrom") || undefined,
+        dateTo: searchParams.get("dateTo") || undefined,
+        search: searchParams.get("search") || undefined,
+      };
+      const { rows, total } =
+        user.role === "admin"
+          ? await getLeaveRequestsPaged(filters, page)
+          : await getLeavesByEmployeesPaged(
+              (await getEmployeesByManager(user.email))
+                .filter((e) => e.status === "active")
+                .map((e) => e.email),
+              filters,
+              page
+            );
+      return NextResponse.json({ rows: await withReviewerNames(rows), total });
+    }
+
     if (view === "all" && user.role === "admin") {
       const leaves = await getLeaveRequests();
       return NextResponse.json(await withReviewerNames(leaves));
@@ -75,7 +110,26 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(await withReviewerNames(leaves));
     }
 
-    // Default: my leaves
+    // Default: my leaves — same opt-in pagination pattern as ?view=all
+    // above, used by Dashboard's "My Leave Requests" table.
+    if (searchParams.get("page")) {
+      const page = Math.max(1, parseInt(searchParams.get("page")!, 10) || 1);
+      const filters: MyLeaveRequestFilters = {
+        leaveType: searchParams.get("leaveType") || undefined,
+        stage:
+          (searchParams.get("stage") as MyLeaveRequestFilters["stage"]) ||
+          undefined,
+        dateFrom: searchParams.get("dateFrom") || undefined,
+        dateTo: searchParams.get("dateTo") || undefined,
+      };
+      const { rows, total } = await getLeavesByEmployeePaged(
+        user.email,
+        filters,
+        page
+      );
+      return NextResponse.json({ rows, total });
+    }
+
     const leaves = await getLeavesByEmployee(user.email);
     return NextResponse.json(leaves);
   } catch (err) {

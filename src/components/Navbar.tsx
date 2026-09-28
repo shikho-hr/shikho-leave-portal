@@ -15,6 +15,13 @@ export default function Navbar() {
   // no pending-approvals badge, no notification bell (see system-admin.ts).
   const systemAdmin = isSystemAdmin(user?.email);
   const [pendingCount, setPendingCount] = useState(0);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  // Close the mobile menu on route change so it doesn't stay open after
+  // tapping a link (Navbar persists across client-side navigation).
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [pathname]);
 
   useEffect(() => {
     if (systemAdmin) return;
@@ -126,12 +133,71 @@ export default function Navbar() {
                 await signOutUser();
                 window.location.href = "/";
               }}
-              className="text-sm text-indigo-200 hover:text-white transition-colors"
+              className="text-sm text-indigo-200 hover:text-white transition-colors hidden sm:block"
             >
               Sign out
             </button>
+            <button
+              onClick={() => setMobileMenuOpen((o) => !o)}
+              className="sm:hidden text-indigo-100 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+              aria-label="Menu"
+              aria-expanded={mobileMenuOpen}
+            >
+              <svg
+                className="w-6 h-6"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                {mobileMenuOpen ? (
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.8}
+                    d="M6 18L18 6M6 6l12 12"
+                  />
+                ) : (
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.8}
+                    d="M4 6h16M4 12h16M4 18h16"
+                  />
+                )}
+              </svg>
+            </button>
           </div>
         </div>
+
+        {mobileMenuOpen && (
+          <div className="sm:hidden pb-3 flex flex-col gap-1">
+            {links.map((link) => (
+              <Link
+                key={link.href}
+                href={link.href}
+                className={`px-3 py-2 rounded-xl text-sm font-medium transition-colors ${
+                  pathname === link.href
+                    ? "bg-white/20 text-white"
+                    : "text-indigo-100 hover:text-white hover:bg-white/10"
+                }`}
+              >
+                {link.label}
+              </Link>
+            ))}
+            <div className="border-t border-white/10 mt-1 pt-2 flex items-center justify-between px-3">
+              <span className="text-sm text-indigo-200">{user?.name}</span>
+              <button
+                onClick={async () => {
+                  await signOutUser();
+                  window.location.href = "/";
+                }}
+                className="text-sm text-indigo-200 hover:text-white transition-colors"
+              >
+                Sign out
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </nav>
   );

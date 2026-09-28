@@ -18,12 +18,17 @@ export default function InternalNoteThread({
   leaveId,
   currentUserEmail,
   initialExpanded = false,
+  locked = false,
 }: {
   leaveId: string;
   currentUserEmail: string;
   // Opens already expanded — used by the notification popup when the
   // notification that opened it was itself about a new internal note.
   initialExpanded?: boolean;
+  // True once the leave is approved/rejected — the API rejects new notes at
+  // that point (see isResolvedLeaveStatus), so the input is hidden rather
+  // than left there to fail on submit.
+  locked?: boolean;
 }) {
   const [notes, setNotes] = useState<Note[]>([]);
   const [newNote, setNewNote] = useState("");
@@ -138,23 +143,25 @@ export default function InternalNoteThread({
             ))
           )}
 
-          <div className="flex gap-2 pt-1">
-            <input
-              type="text"
-              placeholder="Add an internal note (manager/admin only)..."
-              value={newNote}
-              onChange={(e) => setNewNote(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
-              className="flex-1 border border-sunrise/30 rounded-lg px-2.5 py-1.5 text-xs focus:ring-1 focus:ring-yellow-600 bg-white"
-            />
-            <button
-              onClick={handleSubmit}
-              disabled={sending || !newNote.trim()}
-              className="text-xs font-semibold text-white bg-yellow-600 px-3 py-1.5 rounded-lg hover:bg-yellow-700 disabled:opacity-50 transition-colors"
-            >
-              {sending ? "..." : "Send"}
-            </button>
-          </div>
+          {!locked && (
+            <div className="flex gap-2 pt-1">
+              <input
+                type="text"
+                placeholder="Add an internal note (manager/admin only)..."
+                value={newNote}
+                onChange={(e) => setNewNote(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+                className="flex-1 border border-sunrise/30 rounded-lg px-2.5 py-1.5 text-xs focus:ring-1 focus:ring-yellow-600 bg-white"
+              />
+              <button
+                onClick={handleSubmit}
+                disabled={sending || !newNote.trim()}
+                className="text-xs font-semibold text-white bg-yellow-600 px-3 py-1.5 rounded-lg hover:bg-yellow-700 disabled:opacity-50 transition-colors"
+              >
+                {sending ? "..." : "Send"}
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

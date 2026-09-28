@@ -195,7 +195,7 @@ export default function ApplyLeave() {
 
         <form
           onSubmit={handleSubmit}
-          className="bg-white rounded-2xl border border-gray-100 p-6 space-y-5 shadow-sm"
+          className="bg-white rounded-2xl border border-gray-100 p-4 sm:p-6 space-y-5 shadow-sm"
         >
           {/* Leave type */}
           <div>
@@ -225,7 +225,7 @@ export default function ApplyLeave() {
               <label className="block text-sm font-semibold text-gray-700 mb-1.5">
                 Half day
               </label>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 {(
                   [
                     ["", "Whole day"],
@@ -239,7 +239,7 @@ export default function ApplyLeave() {
                     onClick={() =>
                       setForm((f) => ({ ...f, halfDayPeriod: value }))
                     }
-                    className={`flex-1 px-3 py-2 rounded-xl text-sm font-medium border transition-colors ${
+                    className={`flex-1 min-w-[100px] px-3 py-2 rounded-xl text-sm font-medium border transition-colors ${
                       form.halfDayPeriod === value
                         ? "bg-indigo-600 text-white border-indigo-600"
                         : "bg-gray-50/50 text-gray-600 border-gray-200 hover:border-indigo-300"

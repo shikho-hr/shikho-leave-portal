@@ -23,9 +23,14 @@ interface QueueItem {
 export default function CompOffApprovalQueue({
   onCountChange,
   onToast,
+  refreshKey,
 }: {
   onCountChange?: (count: number) => void;
   onToast?: (message: string, type: "success" | "danger") => void;
+  // Bumped by the parent's Refresh button to force a reload on demand —
+  // there's no polling here, so this is the only way to refresh in place
+  // without switching tabs away and back.
+  refreshKey?: number;
 }) {
   const [items, setItems] = useState<QueueItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -47,10 +52,9 @@ export default function CompOffApprovalQueue({
 
   useEffect(() => {
     load();
-    // Same 30s cadence as the leave queues and the bell.
-    const interval = setInterval(load, 30000);
-    return () => clearInterval(interval);
-  }, [load]);
+    // No polling — reloads on mount and whenever the parent bumps
+    // refreshKey via its Refresh button (Neon usage-limit fix).
+  }, [load, refreshKey]);
 
   const decide = async (id: string, status: "accepted" | "rejected") => {
     setErrors((e) => ({ ...e, [id]: "" }));

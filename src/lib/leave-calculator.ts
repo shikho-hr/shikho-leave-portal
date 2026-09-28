@@ -123,6 +123,14 @@ export function isSingleStageApproval(
   );
 }
 
+// Final, decided states — once a leave reaches one of these, its Comment and
+// Internal Note threads close permanently (no new entries, by anyone). That
+// makes both threads immutable from this point on, which is what lets their
+// GET responses be cached indefinitely instead of re-fetched on every login.
+export function isResolvedLeaveStatus(status: string): boolean {
+  return status === "approved" || status === "rejected";
+}
+
 // Display format for dates shown anywhere in the portal, e.g. "15 Jul, 2026".
 export function formatDate(dateStr: string): string {
   return format(parseISO(dateStr), "d MMM, yyyy");
