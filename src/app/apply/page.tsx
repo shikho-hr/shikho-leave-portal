@@ -28,6 +28,14 @@ const TYPE_LABELS: Record<string, string> = {
   wfh_deployment: "WFH - Deployment",
 };
 
+// Dropdown order for the Leave Type select: everything keeps the order
+// getAvailableLeaveTypes() returns, except Off-site Attendance and then
+// Compassionate Leave, which are moved to the very end (in that order).
+// Done here rather than in getAvailableLeaveTypes() because that result is
+// served from a cache that only refreshes on roster sync.
+const displayRank = (type: string) =>
+  type === "compassionate" ? 2 : type === "offsite_attendance" ? 1 : 0;
+
 type HalfDayChoice = "" | "first_half" | "second_half";
 
 // Dates must be picked via the calendar UI, not typed — avoids mm/dd vs
@@ -82,7 +90,11 @@ export default function ApplyLeave() {
         fetch("/api/balance").then((r) => r.json()),
         fetch("/api/holidays").then((r) => r.json()),
       ]).then(([balanceData, holidayData]) => {
-        setAvailableTypes(balanceData.availableTypes || []);
+        setAvailableTypes(
+          [...(balanceData.availableTypes || [])].sort(
+            (a, b) => displayRank(a) - displayRank(b)
+          )
+        );
         setCompOffRemaining(balanceData.compOff?.remaining ?? 0);
         setHolidayDates(holidayData.dates || []);
         setWorkingWeekendDates(holidayData.workingWeekendDates || []);

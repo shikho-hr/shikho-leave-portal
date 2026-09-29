@@ -140,9 +140,9 @@ const HALF_DAY_LABELS: Record<string, string> = {
   second_half: "Second half",
 };
 
-// Matches LEAVE_REQUESTS_PAGE_SIZE in src/lib/db.ts (display-only constant —
+// Matches MY_LEAVE_REQUESTS_PAGE_SIZE in src/lib/db.ts (display-only constant —
 // db.ts is server-only and can't be imported into a client component).
-const REQUESTS_PAGE_SIZE = 50;
+const REQUESTS_PAGE_SIZE = 5;
 
 const CARD_ACCENTS = [
   "border-l-indigo-600",
@@ -310,8 +310,8 @@ export default function Dashboard() {
     setMyPage(1);
   };
 
-  // Taken tab — no auto-fetch at all, including on first switching to the
-  // tab. The full history is fetched once and cached in `leaves`; every
+  // Taken tab — nothing loads with the page. The full history is fetched
+  // once, when the tab is first opened, and cached in `leaves`; every
   // Type/Year change after that just re-filters what's already in memory —
   // no repeat network call — until Refresh is clicked explicitly.
   const fetchHistory = () => {
@@ -329,6 +329,16 @@ export default function Dashboard() {
     setAppliedHistoryType(historyType);
     setAppliedHistoryYear(historyYear);
   };
+
+  // Loads the default view (All Leaves, current year) the first time the
+  // Taken tab is opened — not on page load, and not again afterwards. Later
+  // Type/Year changes wait for Apply Changes and reuse this cached data.
+  useEffect(() => {
+    if (balanceView === "taken" && user && !takenLoaded && !takenLoading) {
+      fetchHistory();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [balanceView, user]);
 
   const handleApplyHistory = () => {
     if (takenLoaded) {
@@ -586,8 +596,7 @@ export default function Dashboard() {
                     <div className="max-w-xl bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
                       {!takenLoaded ? (
                         <p className="p-6 text-center text-sm text-gray-400">
-                          Choose a leave type and year, then click Apply
-                          Changes to view your leave history.
+                          Loading...
                         </p>
                       ) : historyLeaves.length === 0 ? (
                         <p className="p-6 text-center text-sm text-gray-400">

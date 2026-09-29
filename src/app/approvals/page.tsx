@@ -2,7 +2,7 @@
 
 import { useAuth } from "@/lib/AuthContext";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import Navbar from "@/components/Navbar";
 import CommentThread from "@/components/CommentThread";
 import InternalNoteThread from "@/components/InternalNoteThread";
@@ -65,6 +65,19 @@ const HALF_DAY_LABELS: Record<string, string> = {
 };
 
 const LEAVE_TYPE_OPTIONS = Object.keys(TYPE_LABELS);
+
+// Matches LEAVE_REQUESTS_PAGE_SIZE in src/lib/db.ts (display-only constant —
+// db.ts is server-only and can't be imported into a client component).
+const HISTORY_PAGE_SIZE = 50;
+
+// Local calendar date as YYYY-MM-DD (toISOString would give the UTC date,
+// which is the wrong day for the first hours of the morning in Dhaka).
+function todayLocal(): string {
+  const d = new Date();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
 
 // Dates must be picked via the calendar UI, not typed — avoids mm/dd vs
 // dd/mm ambiguity from manual keyboard entry. Tab is still allowed through
@@ -132,6 +145,13 @@ function ApprovalsContent() {
   const [pendingLeaves, setPendingLeaves] = useState<PendingLeave[]>([]);
   const [hrLeaves, setHrLeaves] = useState<PendingLeave[]>([]);
   const [historyLeaves, setHistoryLeaves] = useState<PendingLeave[]>([]);
+  const [historyTotal, setHistoryTotal] = useState(0);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyPage, setHistoryPage] = useState(1);
+  // Last History query actually sent — lets the tab skip refetching when you
+  // switch away and back with nothing changed, and lets an approve/reject
+  // mark it stale (null) so the next visit picks up the new status.
+  const historyKeyRef = useRef<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionId, setActionId] = useState<string | null>(null);
   const [comments, setComments] = useState<Record<string, string>>({});
@@ -140,10 +160,19 @@ function ApprovalsContent() {
     message: string;
     type: "success" | "danger";
   } | null>(null);
+  // History filters. The default view is today's leave requests (leave dates
+  // overlapping today); anything else is picked here and only takes effect
+  // when Apply Changes is clicked, so nothing fetches while you're editing.
   const [filterLeaveType, setFilterLeaveType] = useState("all");
   const [filterStatus, setFilterStatus] = useState("all");
-  const [filterDateFrom, setFilterDateFrom] = useState("");
-  const [filterDateTo, setFilterDateTo] = useState("");
+  const [filterDateFrom, setFilterDateFrom] = useState(todayLocal);
+  const [filterDateTo, setFilterDateTo] = useState(todayLocal);
+  const [appliedHistoryFilters, setAppliedHistoryFilters] = useState(() => ({
+    leaveType: "all",
+    status: "all",
+    dateFrom: todayLocal(),
+    dateTo: todayLocal(),
+  }));
   // HR tab groups: both are actionable (HR can approve/reject at either
   // stage) — "Manager approved" starts open since it's usually more urgent;
   // "Awaiting manager" starts collapsed as a soft nudge to let the manager
@@ -197,11 +226,52 @@ function ApprovalsContent() {
       .then((data) => setPendingLeaves(Array.isArray(data) ? data : []));
 
   // History — every request this manager/HR can see, at any stage, so
-  // approved/rejected requests don't just disappear once actioned.
-  const fetchHistory = () =>
-    fetch("/api/leaves?view=all")
+  // approved/rejected requests don't just disappear once actioned. Filtered
+  // and paginated server-side (50/page) rather than pulling the whole table.
+  const historyQuery = () => {
+    const params = new URLSearchParams({
+      view: "all",
+      page: String(historyPage),
+    });
+    const f = appliedHistoryFilters;
+    if (f.leaveType !== "all") params.set("leaveType", f.leaveType);
+    if (f.status !== "all") params.set("status", f.status);
+    if (f.dateFrom) params.set("dateFrom", f.dateFrom);
+    if (f.dateTo) params.set("dateTo", f.dateTo);
+    return params.toString();
+  };
+
+  const fetchHistory = () => {
+    const query = historyQuery();
+    historyKeyRef.current = query;
+    setHistoryLoading(true);
+    return fetch(`/api/leaves?${query}`)
       .then((r) => r.json())
-      .then((data) => setHistoryLeaves(Array.isArray(data) ? data : []));
+      .then((data) => {
+        setHistoryLeaves(Array.isArray(data.rows) ? data.rows : []);
+        setHistoryTotal(typeof data.total === "number" ? data.total : 0);
+      })
+      .finally(() => setHistoryLoading(false));
+  };
+
+  // Loads the History tab the first time it's opened (not on page load), and
+  // again only when Apply Changes / the page actually changes the query.
+  useEffect(() => {
+    if (!user || tab !== "history") return;
+    if (historyKeyRef.current === historyQuery()) return;
+    fetchHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, tab, appliedHistoryFilters, historyPage]);
+
+  const handleApplyHistoryFilters = () => {
+    setAppliedHistoryFilters({
+      leaveType: filterLeaveType,
+      status: filterStatus,
+      dateFrom: filterDateFrom,
+      dateTo: filterDateTo,
+    });
+    setHistoryPage(1);
+  };
 
   const fetchHr = () =>
     fetch("/api/leaves?view=hr")
@@ -209,7 +279,7 @@ function ApprovalsContent() {
       .then((data) => setHrLeaves(Array.isArray(data) ? data : []));
 
   const fetchLeaves = () => {
-    const fetches: Promise<void>[] = [fetchPending(), fetchHistory()];
+    const fetches: Promise<void>[] = [fetchPending()];
     if (isAdmin) fetches.push(fetchHr());
     Promise.all(fetches).then(() => setLoading(false));
   };
@@ -271,11 +341,10 @@ function ApprovalsContent() {
           delete next[leaveId];
           return next;
         });
-        // Refresh History so the just-actioned request shows its new
-        // status there instead of just vanishing from the queue.
-        fetch("/api/leaves?view=all")
-          .then((r) => r.json())
-          .then((d) => setHistoryLeaves(Array.isArray(d) ? d : []));
+        // Mark History stale so the just-actioned request shows its new
+        // status there the next time that tab is opened, instead of
+        // refetching a tab that isn't even on screen.
+        historyKeyRef.current = null;
         // Tell the Navbar's pending-count badge to refresh immediately —
         // it otherwise only fetches once on mount and has no other way to
         // know this action just happened.
@@ -347,15 +416,12 @@ function ApprovalsContent() {
   // toward the tab badge.
   const hrActionableCount = hrLeaves.length;
 
-  const filteredLeaves =
-    tab !== "history"
-      ? currentLeaves
-      : currentLeaves.filter(
-          (l) =>
-            (filterLeaveType === "all" || l.leaveType === filterLeaveType) &&
-            (filterStatus === "all" || l.status === filterStatus) &&
-            (!filterDateFrom || l.endDate >= filterDateFrom) &&
-            (!filterDateTo || l.startDate <= filterDateTo)
+  // History is already filtered and paged by the database (see
+  // historyQuery), so there's nothing left to filter client-side.
+  const filteredLeaves = currentLeaves;
+  const historyTotalPages = Math.max(
+    1,
+    Math.ceil(historyTotal / HISTORY_PAGE_SIZE)
   );
 
   // Shared card renderer — used for the flat Manager Approval/History lists
@@ -653,6 +719,12 @@ function ApprovalsContent() {
               aria-label="Leave dates on or before"
             />
           </div>
+          <button
+            onClick={handleApplyHistoryFilters}
+            className="bg-indigo-600 text-white text-sm font-semibold px-4 py-2 rounded-xl hover:bg-indigo-700 transition-colors shadow-sm"
+          >
+            Apply Changes
+          </button>
         </div>
         )}
 
@@ -668,15 +740,17 @@ function ApprovalsContent() {
               refreshKey={refreshKey}
             />
           </>
+        ) : tab === "history" && historyLoading ? (
+          <div className="bg-white rounded-2xl border border-gray-100 p-10 text-center text-gray-400 shadow-sm">
+            Loading...
+          </div>
         ) : filteredLeaves.length === 0 ? (
           <div className="bg-white rounded-2xl border border-gray-100 p-10 text-center text-gray-400 shadow-sm">
-            {currentLeaves.length > 0
-              ? "No leave requests match these filters"
-              : tab === "pending"
+            {tab === "pending"
               ? "No pending leave requests"
               : tab === "hr"
               ? "No requests awaiting HR approval"
-              : "No leave request activity yet"}
+              : "No leave requests match these filters"}
           </div>
         ) : tab === "hr" ? (
           <div className="space-y-4">
@@ -717,6 +791,37 @@ function ApprovalsContent() {
           </div>
         ) : (
           <div className="space-y-4">{filteredLeaves.map(renderCard)}</div>
+        )}
+
+        {tab === "history" && historyTotal > HISTORY_PAGE_SIZE && (
+          <div className="flex items-center justify-between mt-4 text-sm">
+            <span className="text-gray-500">
+              Showing {(historyPage - 1) * HISTORY_PAGE_SIZE + 1}–
+              {Math.min(historyPage * HISTORY_PAGE_SIZE, historyTotal)} of{" "}
+              {historyTotal.toLocaleString()}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setHistoryPage((p) => Math.max(1, p - 1))}
+                disabled={historyPage <= 1 || historyLoading}
+                className="bg-white border border-gray-200 text-gray-700 font-semibold px-3 py-1.5 rounded-xl hover:border-indigo-300 disabled:opacity-50 transition-colors shadow-sm"
+              >
+                Previous
+              </button>
+              <span className="text-gray-500">
+                Page {historyPage} of {historyTotalPages}
+              </span>
+              <button
+                onClick={() =>
+                  setHistoryPage((p) => Math.min(historyTotalPages, p + 1))
+                }
+                disabled={historyPage >= historyTotalPages || historyLoading}
+                className="bg-white border border-gray-200 text-gray-700 font-semibold px-3 py-1.5 rounded-xl hover:border-indigo-300 disabled:opacity-50 transition-colors shadow-sm"
+              >
+                Next
+              </button>
+            </div>
+          </div>
         )}
       </main>
     </div>

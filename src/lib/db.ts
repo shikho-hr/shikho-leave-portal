@@ -859,6 +859,9 @@ export async function getLeavesByEmployee(
 // UI's derived label, not the raw status column — "Pending" covers both
 // "pending" and "manager_approved" (same STAGE_LABELS grouping the client
 // used to apply itself), "Approved"/"Rejected" map straight to their status.
+// Small on purpose: this is one person's own list, shown a few at a time.
+export const MY_LEAVE_REQUESTS_PAGE_SIZE = 5;
+
 export interface MyLeaveRequestFilters {
   leaveType?: string;
   stage?: "Pending" | "Approved" | "Rejected";
@@ -883,8 +886,8 @@ export async function getLeavesByEmployeePaged(
     prisma.leave.findMany({
       where,
       orderBy: [{ appliedOn: "desc" }, { id: "desc" }],
-      skip: (page - 1) * LEAVE_REQUESTS_PAGE_SIZE,
-      take: LEAVE_REQUESTS_PAGE_SIZE,
+      skip: (page - 1) * MY_LEAVE_REQUESTS_PAGE_SIZE,
+      take: MY_LEAVE_REQUESTS_PAGE_SIZE,
     }),
     prisma.leave.count({ where }),
   ]);
