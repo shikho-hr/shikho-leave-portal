@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import LeavePopup from "./LeavePopup";
 import CompOffPopup from "./CompOffPopup";
 import CompOffReviewPopup from "./CompOffReviewPopup";
@@ -52,6 +52,7 @@ export default function NotificationBell({
   currentUserEmail: string;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [open, setOpen] = useState(false);
   const [activeNotification, setActiveNotification] =
@@ -67,12 +68,13 @@ export default function NotificationBell({
       .then((data) => setNotifications(Array.isArray(data) ? data : []));
   };
 
+  // No polling, and opening the dropdown doesn't fetch either. The count
+  // only updates when you navigate to another page (or the page loads) and
+  // when you click Refresh inside the dropdown — so the badge never ticks
+  // over live while you sit on a page (Neon free-tier data-transfer limit).
   useEffect(() => {
     fetchNotifications();
-    // No polling — refetched only on mount, on opening the dropdown, and via
-    // the Refresh link inside it. Keeps this from hitting the database every
-    // 30s from every open tab across the whole app (Neon usage-limit fix).
-  }, []);
+  }, [pathname]);
 
   useEffect(() => {
     if (!open) return;
@@ -120,14 +122,7 @@ export default function NotificationBell({
     <>
       <div className="relative" onClick={(e) => e.stopPropagation()}>
         <button
-          onClick={() =>
-            setOpen((o) => {
-              const next = !o;
-              // Opening the dropdown is the "manual refresh" — no interval.
-              if (next) fetchNotifications();
-              return next;
-            })
-          }
+          onClick={() => setOpen((o) => !o)}
           className="relative text-indigo-100 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-colors"
           aria-label="Notifications"
         >
