@@ -6,7 +6,7 @@ import {
   getOpeningBalance,
   getBalanceSnapshot,
   getCompOffSummary,
-  getCachedAvailableLeaveTypes,
+  getCachedAvailableLeaveTypesFor,
   refreshAvailableLeaveTypesCache,
 } from "@/lib/db";
 import { calculateBalance, isOnProbation } from "@/lib/leave-calculator";
@@ -17,17 +17,30 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
-    const employee = await getEmployeeByEmail(user.email);
+    // Every lookup depends only on the email, so they all run in a single
+    // parallel round instead of one network round trip each (the DB is a
+    // remote Neon instance, so sequential awaits dominated the latency).
+    const [
+      employee,
+      approvedLeaves,
+      openingBalance,
+      snapshot,
+      compOff,
+      cachedTypes,
+    ] = await Promise.all([
+      getEmployeeByEmail(user.email),
+      getApprovedLeavesByEmployee(user.email),
+      getOpeningBalance(user.email),
+      getBalanceSnapshot(user.email),
+      getCompOffSummary(user.email),
+      getCachedAvailableLeaveTypesFor(user.email),
+    ]);
     if (!employee)
       return NextResponse.json(
         { error: "Employee not found" },
         { status: 404 }
       );
 
-    const approvedLeaves = await getApprovedLeavesByEmployee(user.email);
-    const openingBalance = await getOpeningBalance(user.email);
-    const snapshot = await getBalanceSnapshot(user.email);
-    const compOff = await getCompOffSummary(user.email);
     const balance = calculateBalance(
       employee,
       approvedLeaves,
@@ -42,11 +55,10 @@ export async function GET() {
     // cache (see db.ts) instead of being recomputed live on every page
     // load — cold start (e.g. right after the migration, before the first
     // sync) computes and populates it once so the dropdown isn't empty.
-    let leaveTypesCache = await getCachedAvailableLeaveTypes();
-    if (!leaveTypesCache) {
-      leaveTypesCache = await refreshAvailableLeaveTypesCache();
-    }
-    const availableTypes = leaveTypesCache.data[employee.email] || [];
+    const availableTypes =
+      cachedTypes ??
+      (await refreshAvailableLeaveTypesCache()).data[employee.email] ??
+      [];
 
     return NextResponse.json({
       balance,

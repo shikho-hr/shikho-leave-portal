@@ -84,23 +84,31 @@ export default function ApplyLeave() {
     if (status === "unauthenticated") router.replace("/");
   }, [status, router]);
 
+  // Kicked off on mount instead of waiting for `user`: both endpoints
+  // authenticate from the session cookie themselves, so waiting for the
+  // /api/auth/me round trip first only added a serial network hop. Each
+  // response fills in on its own, so the dropdown isn't held up by holidays.
+  // (A 401 just yields empty data; the redirect effect above handles logout.)
   useEffect(() => {
-    if (user) {
-      Promise.all([
-        fetch("/api/balance").then((r) => r.json()),
-        fetch("/api/holidays").then((r) => r.json()),
-      ]).then(([balanceData, holidayData]) => {
+    fetch("/api/balance")
+      .then((r) => r.json())
+      .then((balanceData) => {
         setAvailableTypes(
           [...(balanceData.availableTypes || [])].sort(
             (a, b) => displayRank(a) - displayRank(b)
           )
         );
         setCompOffRemaining(balanceData.compOff?.remaining ?? 0);
+      })
+      .catch(() => {});
+    fetch("/api/holidays")
+      .then((r) => r.json())
+      .then((holidayData) => {
         setHolidayDates(holidayData.dates || []);
         setWorkingWeekendDates(holidayData.workingWeekendDates || []);
-      });
-    }
-  }, [user]);
+      })
+      .catch(() => {});
+  }, []);
 
   // Reset the half-day choice if the selected leave type no longer supports it
   useEffect(() => {

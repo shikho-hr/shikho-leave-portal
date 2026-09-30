@@ -1204,6 +1204,21 @@ export async function getCachedAvailableLeaveTypes(): Promise<{
   };
 }
 
+// One employee's entry, extracted inside Postgres so a request doesn't
+// download every employee's leave types just to use its own. Returns null
+// when the cache row doesn't exist yet (cold start - caller should refresh),
+// and [] when the row exists but has no entry for this employee.
+export async function getCachedAvailableLeaveTypesFor(
+  email: string
+): Promise<LeaveType[] | null> {
+  const rows = await prisma.$queryRaw<{ types: LeaveType[] | null }[]>`
+    SELECT data -> ${email.toLowerCase()}::text AS types
+    FROM "AvailableLeaveTypesCache"
+    WHERE id = 'admin'`;
+  if (rows.length === 0) return null;
+  return rows[0].types ?? [];
+}
+
 // ── Holidays cache ───────────────────────────────────────────────
 // GET /api/holidays (the Apply page's date calculations) - read by every
 // employee on every visit, changes only through the four admin mutations
