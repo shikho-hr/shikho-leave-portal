@@ -12,17 +12,12 @@ export interface CurrentUser {
   employeeId: string;
 }
 
-// TEMP-AUTH-TIMING: remove after measuring (durations only, no user data).
-let authTimingWarm = false;
-
 export async function getCurrentUser(): Promise<CurrentUser | null> {
   const sessionCookie = cookies().get("session")?.value;
   if (!sessionCookie) return null;
 
   try {
-    const t0 = performance.now();
     const decoded = await adminAuth.verifySessionCookie(sessionCookie, true);
-    const t1 = performance.now();
     if (!decoded.email) return null;
 
     // The HR automation account is a permanent admin — restore its row if
@@ -30,11 +25,6 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
     if (isSystemAdmin(decoded.email)) await ensureSystemAdmin();
 
     const employee = await getEmployeeByEmail(decoded.email);
-    const t2 = performance.now();
-    console.log(
-      `[auth-timing] cold=${!authTimingWarm} verifyRevoked=${(t1 - t0).toFixed(0)}ms dbLookup=${(t2 - t1).toFixed(0)}ms region=${process.env.VERCEL_REGION}`
-    );
-    authTimingWarm = true;
     if (!employee || employee.status !== "active") return null;
 
     return {
