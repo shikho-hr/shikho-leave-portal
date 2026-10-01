@@ -7,11 +7,7 @@
     },
     {
       "path": "/api/admin/backup-leaves",
-      "schedule": "15 3 * * *"
-    },
-    {
-      "path": "/api/admin/employee-balances-cache",
-      "schedule": "30 3 * * *"
+      "schedule": "15 3 * * 0-4"
     }
   ]
 }
