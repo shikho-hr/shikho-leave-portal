@@ -155,7 +155,10 @@ export function formatDateRange(startDate: string, endDate: string): string {
 // Company weekend is Friday/Saturday, unless the specific date is in
 // workingWeekendSet (a team came in to make up for a holiday landing
 // mid-week) — that overrides the default weekend exclusion, but a date
-// explicitly marked a holiday is always excluded regardless.
+// explicitly marked a holiday is always excluded regardless. ignoreWeekend
+// drops the weekend check entirely (still subject to the holiday check) —
+// used for WFH-type leave, which can be taken on a weekend (HR policy,
+// 2026-10-04).
 // Note: compare using local-time yyyy-MM-dd (via date-fns `format`), not
 // `date.toISOString()` — toISOString() converts to UTC, which silently
 // shifts the date by a day in any timezone ahead of UTC and would never
@@ -164,10 +167,12 @@ export function formatDateRange(startDate: string, endDate: string): string {
 function isExcludedDay(
   date: Date,
   holidaySet: Set<string>,
-  workingWeekendSet: Set<string>
+  workingWeekendSet: Set<string>,
+  ignoreWeekend: boolean = false
 ): boolean {
   const dateStr = format(date, "yyyy-MM-dd");
   if (holidaySet.has(dateStr)) return true;
+  if (ignoreWeekend) return false;
   const day = date.getDay(); // 0 = Sunday ... 5 = Friday, 6 = Saturday
   return (day === 5 || day === 6) && !workingWeekendSet.has(dateStr);
 }
@@ -180,7 +185,9 @@ function isExcludedDay(
 // holidayDates (unless overridden by workingWeekendDates), same as the
 // day-counting this replaces — except for Off-site Attendance, which isn't
 // time off (the employee is working, just not from the office), so every
-// calendar day in the range counts regardless of weekend/holiday.
+// calendar day in the range counts regardless of weekend/holiday; and
+// WFH-type leave (WFH, Monthly WFH for Ladies, WFH - Deployment), which can
+// be taken on a weekend but still excludes holidays (HR policy, 2026-10-04).
 export function splitDaysByYear(
   startDate: string,
   endDate: string,
@@ -193,10 +200,11 @@ export function splitDaysByYear(
   const workingWeekendSet = new Set(workingWeekendDates);
   const result: Record<string, number> = {};
   const countsEveryDay = leaveType === "offsite_attendance";
+  const ignoreWeekend = Boolean(leaveType && WFH_LEAVE_TYPES.includes(leaveType));
 
   if (halfDayPeriod) {
     const date = parseISO(startDate);
-    if (countsEveryDay || !isExcludedDay(date, holidaySet, workingWeekendSet)) {
+    if (countsEveryDay || !isExcludedDay(date, holidaySet, workingWeekendSet, ignoreWeekend)) {
       result[String(date.getFullYear())] = 0.5;
     }
     return result;
@@ -205,7 +213,7 @@ export function splitDaysByYear(
   let cursor = parseISO(startDate);
   const end = parseISO(endDate);
   while (!isAfter(cursor, end)) {
-    if (countsEveryDay || !isExcludedDay(cursor, holidaySet, workingWeekendSet)) {
+    if (countsEveryDay || !isExcludedDay(cursor, holidaySet, workingWeekendSet, ignoreWeekend)) {
       const key = String(cursor.getFullYear());
       result[key] = (result[key] || 0) + 1;
     }
