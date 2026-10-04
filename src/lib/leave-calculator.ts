@@ -24,6 +24,7 @@ import {
   isAfter,
   isBefore,
   addDays,
+  addMonths,
   format,
   differenceInCalendarDays,
   endOfMonth,
@@ -247,6 +248,53 @@ export function isOnProbation(employee: Employee, asOfDate: Date): boolean {
   return isBefore(asOfDate, parseISO(employee.probationEndDate));
 }
 
+// Sick/Casual grants earned so far during probation: 1 Sick + 1 Casual for
+// every month of probation, each arriving on the monthly anniversary of the
+// JOINING date (HR policy, confirmed 2026-10-04 — replaces the flat "1 for
+// the whole probation" rule of 2026-09-16). A grant counts only if its
+// anniversary is on/before asOfDate AND before the probation end date, so
+// the total stops growing once probation is over. Passing probationEndDate
+// as asOfDate gives what a full probation earns. addMonths clamps month-end
+// joiners (31 Jan -> 28 Feb) while still counting from the original day.
+export function probationGrantCount(employee: Employee, asOfDate: Date): number {
+  if (!employee.probationEndDate || !employee.joiningDate) return 0;
+  const joined = parseISO(employee.joiningDate);
+  const probationEnd = parseISO(employee.probationEndDate);
+  let count = 0;
+  for (let k = 0; k < 24; k++) {
+    const grantDate = addMonths(joined, k);
+    if (!isBefore(grantDate, probationEnd) || isAfter(grantDate, asOfDate)) break;
+    count++;
+  }
+  return count;
+}
+
+// How many of those grants fall in one calendar year -- what the post-probation
+// floor protects. A grant only matters to that year's pool, so a long
+// probation (some roster rows run 12 months) can't push a later year's
+// 14/10 allowance up.
+function probationGrantsInYear(employee: Employee, year: number): number {
+  if (!employee.probationEndDate || !employee.joiningDate) return 0;
+  const joined = parseISO(employee.joiningDate);
+  const probationEnd = parseISO(employee.probationEndDate);
+  let count = 0;
+  for (let k = 0; k < 24; k++) {
+    const grantDate = addMonths(joined, k);
+    if (!isBefore(grantDate, probationEnd)) break;
+    if (grantDate.getFullYear() === year) count++;
+  }
+  return count;
+}
+
+// Annual Leave only shows up once probation is over AND (when the roster
+// sets one) the full-time effective date has arrived. What it shows is still
+// counted from the JOINING date -- see annualLeaveEntitlement().
+function annualLeaveLocked(employee: Employee, asOfDate: Date): boolean {
+  if (isOnProbation(employee, asOfDate)) return true;
+  if (!employee.fullTimeEffectiveDate) return false;
+  return isBefore(asOfDate, parseISO(employee.fullTimeEffectiveDate));
+}
+
 // Matches the authoritative HR sheet's "EDOR" column: end of the current
 // month for an active employee. We don't yet track an exact last-working-
 // day field for someone who's gone inactive (the sheet freezes EDOR there
@@ -259,16 +307,18 @@ function annualLeaveAccrualAsOfDate(today: Date): Date {
   return endOfMonth(today);
 }
 
-// Lifetime AL entitlement: zero until probation ends, then 1 day per
+// Lifetime AL entitlement: zero until probation ends and the full-time
+// effective date (if any) is reached, then 1 day per
 // ANNUAL_LEAVE_ACCRUAL_DIVISOR calendar days of service counted from the
 // JOINING date (HR's rule, 2026-09-14 — the probation months count too,
-// they just can't be spent until probation is over), capped at
+// they just can't be spent until it unlocks), capped at
 // ANNUAL_LEAVE_LIFETIME_CAP — a running total, not a per-calendar-year
-// allowance. Deliberately not fullTimeEffectiveDate: the roster sheet fills
-// that column with "probation end + 1 day" for practically everyone, so
-// using it here silently counted from the end of probation instead.
+// allowance. The full-time date only decides WHEN it appears, never where
+// counting starts: the roster sheet fills that column with "probation end +
+// 1 day" for practically everyone, so counting from it silently dropped the
+// probation months.
 function annualLeaveEntitlement(employee: Employee, asOfDate: Date): number {
-  if (isOnProbation(employee, asOfDate)) return 0;
+  if (annualLeaveLocked(employee, asOfDate)) return 0;
   const accrualDate = annualLeaveAccrualAsOfDate(asOfDate);
   const daysSinceJoining = differenceInCalendarDays(
     accrualDate,
@@ -339,9 +389,12 @@ function freelancerEntitlement(): LeaveBalance {
 }
 
 // ── Non-Tele-sales balance ──────────────────────────────────────
-// During probation: flat 1 SL + 1 CL (HR policy, 2026-09-16) -- not
-// pro-rated by time elapsed, just "1" for as long as probation lasts.
-// After probation: full pro-rata SL (14/yr) + CL (10/yr)
+// During probation: 1 SL + 1 CL for every month of probation, arriving on the
+// joining-date anniversary and carrying over (HR policy, 2026-10-04) -- see
+// probationGrantCount(). Used is counted across all years while it lasts.
+// After probation: full pro-rata SL (14/yr) + CL (10/yr), pro-rated from the
+// JOINING month, and never below what probation already granted (floor
+// applied in calculateBalance).
 //   Pro-rata: 14 minus months missed (Jan=0 missed, Feb=1 missed, etc.)
 // AL: lifetime running total, zero until probation ends, then 1 day per
 //   ANNUAL_LEAVE_ACCRUAL_DIVISOR (24.33) calendar days of service since the
@@ -349,31 +402,27 @@ function freelancerEntitlement(): LeaveBalance {
 //   at ANNUAL_LEAVE_LIFETIME_CAP (60) — NOT a per-calendar-year allowance
 //   like SL/CL above.
 //
-// For tele-sales→FT transitions (fullTimeEffectiveDate is set):
-//   SL and CL calculated from the FT effective date, same rules.
+// Everything is counted from the JOINING date, including for tele-sales→FT
+// transitions: fullTimeEffectiveDate only decides when Annual Leave appears
+// (see annualLeaveLocked), never where any count starts.
 
 function nonTeleSalesEntitlement(
   employee: Employee,
   year: number,
   asOfDate: Date
 ): LeaveBalance {
-  // If this employee transitioned from tele-sales, use FT effective date
-  // for calculating full-time entitlements
-  const ftDate = employee.fullTimeEffectiveDate
-    ? parseISO(employee.fullTimeEffectiveDate)
-    : parseISO(employee.joiningDate);
-
-  const ftYear = ftDate.getFullYear();
+  const joinDate = parseISO(employee.joiningDate);
+  const joinYear = joinDate.getFullYear();
   const onProbation = isOnProbation(employee, asOfDate);
 
   // ── Sick Leave: 14 days/year, pro-rata if joined after Jan 1 ──
   let sickEntitled: number;
   if (onProbation) {
-    // Flat 1 during probation, regardless of how long they've been in it.
-    sickEntitled = 1;
-  } else if (year === ftYear) {
+    // 1 per month of probation so far, cumulative (not year-scoped).
+    sickEntitled = probationGrantCount(employee, asOfDate);
+  } else if (year === joinYear) {
     // Pro-rata: 14 minus months missed
-    const monthsMissed = ftDate.getMonth();
+    const monthsMissed = joinDate.getMonth();
     sickEntitled = Math.max(14 - monthsMissed, 0);
   } else {
     sickEntitled = 14;
@@ -382,10 +431,10 @@ function nonTeleSalesEntitlement(
   // ── Casual Leave: 10 days/year, pro-rata ──
   let casualEntitled: number;
   if (onProbation) {
-    // Flat 1 during probation, same rule as sick leave above.
-    casualEntitled = 1;
-  } else if (year === ftYear) {
-    const monthsMissed = ftDate.getMonth();
+    // Same monthly rule as sick leave above.
+    casualEntitled = probationGrantCount(employee, asOfDate);
+  } else if (year === joinYear) {
+    const monthsMissed = joinDate.getMonth();
     casualEntitled = Math.max(10 - monthsMissed, 0);
   } else {
     casualEntitled = 10;
@@ -500,8 +549,7 @@ export function calculateBalance(
   const targetYear = year || new Date().getFullYear();
 
   // Entitlement track is driven by contract type, not department — a
-  // tele-sales employee who's full-time from day one gets the full formula
-  // (fullTimeEffectiveDate already falls back to joiningDate when blank).
+  // tele-sales employee who's full-time from day one gets the full formula.
   let entitled: LeaveBalance;
   if (employee.contractType === "freelancer") {
     entitled = freelancerEntitlement();
@@ -518,6 +566,20 @@ export function calculateBalance(
   }
 
   const used = calculateUsed(approvedLeaves, targetYear);
+
+  const onProbationNow = isOnProbation(employee, asOfDate);
+
+  // Probation Sick/Casual is a cumulative monthly grant that carries over
+  // (see probationGrantCount), so what's been taken must be counted across
+  // ALL years too -- otherwise a probation that crosses New Year would
+  // "forget" December's leave in January. Same lifetime approach as annual.
+  if (employee.contractType === "full-time" && onProbationNow) {
+    (["sick", "casual"] as const).forEach((type) => {
+      used[type] = approvedLeaves
+        .filter((l) => l.leaveType === type)
+        .reduce((sum, l) => sum + l.days, 0);
+    });
+  }
 
   // A balance snapshot (HR's leave-record sheet, imported by
   // scripts/import-balance-snapshots.ts) is the authoritative state as of
@@ -542,10 +604,9 @@ export function calculateBalance(
   // from the import date onward (HR's request, 2026-09-14), never past the
   // lifetime cap. Sick/casual are year-scoped fixed allowances, so their
   // sheet entitlement stands as-is -- EXCEPT while the employee is still on
-  // probation: the sheet's number predates the flat-1-during-probation
+  // probation: the sheet's number predates the monthly-grant probation
   // policy above, so it would just clobber that with a stale figure.
-  // (2026-09-16)
-  const onProbationNow = isOnProbation(employee, asOfDate);
+  // (2026-09-16, monthly rule 2026-10-04)
   if (snapshot) {
     const snapshotDate = snapshot.importedAt.slice(0, 10);
     const approvedSinceSnapshot = approvedLeaves.filter(
@@ -574,6 +635,20 @@ export function calculateBalance(
         ANNUAL_LEAVE_LIFETIME_CAP
       );
     }
+  }
+
+  // Once probation is over, Sick/Casual never drop below what probation had
+  // already granted in this calendar year (HR, 2026-10-04: unused leave
+  // carries over). Applied after the snapshot override so a lower sheet
+  // figure can't take it back. In practice only bites in the joining year.
+  if (
+    employee.contractType === "full-time" &&
+    !onProbationNow &&
+    employee.probationEndDate
+  ) {
+    const earnedInProbation = probationGrantsInYear(employee, targetYear);
+    entitled.sick = Math.max(entitled.sick, earnedInProbation);
+    entitled.casual = Math.max(entitled.casual, earnedInProbation);
   }
 
   // Monthly WFH for Ladies is a flat "1 per calendar month" allowance, not a
@@ -807,17 +882,25 @@ export function validateLeaveRequest(
   }
 
   // AL not available during probation for full-time employees — unless
-  // this specific employee has the admin-granted exception.
+  // this specific employee has the admin-granted exception. It also stays
+  // locked until the full-time effective date (when one is set).
   if (
     leaveType === "annual" &&
     employee.contractType === "full-time" &&
-    onProbation &&
     !employee.probationAnnualLeaveApproved
   ) {
-    return {
-      valid: false,
-      error: "Annual leave is not available during probation period.",
-    };
+    if (onProbation) {
+      return {
+        valid: false,
+        error: "Annual leave is not available during probation period.",
+      };
+    }
+    if (annualLeaveLocked(employee, parseISO(requestStartDate))) {
+      return {
+        valid: false,
+        error: "Annual leave is not available before your full-time effective date.",
+      };
+    }
   }
 
   // Marriage leave requires probation completion
@@ -967,7 +1050,7 @@ export function getAvailableLeaveTypes(
     }
     if (type === "annual") {
       return (
-        !isOnProbation(employee, new Date()) ||
+        !annualLeaveLocked(employee, new Date()) ||
         employee.probationAnnualLeaveApproved
       );
     }
