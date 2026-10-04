@@ -251,6 +251,7 @@ export async function POST(req: NextRequest) {
       days,
       daysByYear,
       startDate,
+      endDate,
       halfDayPeriod,
       allLeaves,
       { startDate: extraWorkStartDate, endDate: extraWorkEndDate },

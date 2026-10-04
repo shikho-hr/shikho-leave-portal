@@ -53,7 +53,7 @@ async function validate(email: string, days: number, extraWork?: { startDate: st
   const credits = await getCompOffCredits(email);
   return validateLeaveRequest(
     employee, balancesByYear, "compensatory", days, { [year]: days },
-    `${year}-06-15`, undefined, leaves, extraWork, credits
+    `${year}-06-15`, `${year}-06-15`, undefined, leaves, extraWork, credits
   );
 }
 
