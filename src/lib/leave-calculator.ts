@@ -158,7 +158,8 @@ export function formatDateRange(startDate: string, endDate: string): string {
 // explicitly marked a holiday is always excluded regardless. ignoreWeekend
 // drops the weekend check entirely (still subject to the holiday check) —
 // used for WFH-type leave, which can be taken on a weekend (HR policy,
-// 2026-10-04).
+// 2026-10-04). worksSaturday is for the few employees who work Saturdays
+// (admin-set per employee): only Friday is their weekly off-day.
 // Note: compare using local-time yyyy-MM-dd (via date-fns `format`), not
 // `date.toISOString()` — toISOString() converts to UTC, which silently
 // shifts the date by a day in any timezone ahead of UTC and would never
@@ -168,13 +169,15 @@ function isExcludedDay(
   date: Date,
   holidaySet: Set<string>,
   workingWeekendSet: Set<string>,
-  ignoreWeekend: boolean = false
+  ignoreWeekend: boolean = false,
+  worksSaturday: boolean = false
 ): boolean {
   const dateStr = format(date, "yyyy-MM-dd");
   if (holidaySet.has(dateStr)) return true;
   if (ignoreWeekend) return false;
   const day = date.getDay(); // 0 = Sunday ... 5 = Friday, 6 = Saturday
-  return (day === 5 || day === 6) && !workingWeekendSet.has(dateStr);
+  const isWeekend = day === 5 || (day === 6 && !worksSaturday);
+  return isWeekend && !workingWeekendSet.has(dateStr);
 }
 
 // Splits a leave's day count by calendar year — most requests fall entirely
@@ -188,23 +191,28 @@ function isExcludedDay(
 // calendar day in the range counts regardless of weekend/holiday; and
 // WFH-type leave (WFH, Monthly WFH for Ladies, WFH - Deployment), which can
 // be taken on a weekend but still excludes holidays (HR policy, 2026-10-04).
+// worksSaturday (the employee's own admin-set flag) makes Saturday a normal
+// working day for them, so only Friday is skipped.
 export function splitDaysByYear(
   startDate: string,
   endDate: string,
   halfDayPeriod: HalfDayPeriod | "" | undefined,
   holidayDates: string[],
   workingWeekendDates: string[] = [],
-  leaveType?: LeaveType
+  leaveType?: LeaveType,
+  worksSaturday: boolean = false
 ): Record<string, number> {
   const holidaySet = new Set(holidayDates);
   const workingWeekendSet = new Set(workingWeekendDates);
   const result: Record<string, number> = {};
   const countsEveryDay = leaveType === "offsite_attendance";
   const ignoreWeekend = Boolean(leaveType && WFH_LEAVE_TYPES.includes(leaveType));
+  const excluded = (d: Date) =>
+    isExcludedDay(d, holidaySet, workingWeekendSet, ignoreWeekend, worksSaturday);
 
   if (halfDayPeriod) {
     const date = parseISO(startDate);
-    if (countsEveryDay || !isExcludedDay(date, holidaySet, workingWeekendSet, ignoreWeekend)) {
+    if (countsEveryDay || !excluded(date)) {
       result[String(date.getFullYear())] = 0.5;
     }
     return result;
@@ -213,7 +221,7 @@ export function splitDaysByYear(
   let cursor = parseISO(startDate);
   const end = parseISO(endDate);
   while (!isAfter(cursor, end)) {
-    if (countsEveryDay || !isExcludedDay(cursor, holidaySet, workingWeekendSet, ignoreWeekend)) {
+    if (countsEveryDay || !excluded(cursor)) {
       const key = String(cursor.getFullYear());
       result[key] = (result[key] || 0) + 1;
     }
@@ -234,10 +242,19 @@ export function calculateLeaveDays(
   halfDayPeriod: HalfDayPeriod | "" | undefined,
   holidayDates: string[],
   workingWeekendDates: string[] = [],
-  leaveType?: LeaveType
+  leaveType?: LeaveType,
+  worksSaturday: boolean = false
 ): number {
   return Object.values(
-    splitDaysByYear(startDate, endDate, halfDayPeriod, holidayDates, workingWeekendDates, leaveType)
+    splitDaysByYear(
+      startDate,
+      endDate,
+      halfDayPeriod,
+      holidayDates,
+      workingWeekendDates,
+      leaveType,
+      worksSaturday
+    )
   ).reduce((sum, d) => sum + d, 0);
 }
 

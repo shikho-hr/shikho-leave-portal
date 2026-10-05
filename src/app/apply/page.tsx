@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import Navbar from "@/components/Navbar";
 import {
   HALF_DAY_ELIGIBLE_TYPES,
+  WFH_LEAVE_TYPES,
   calculateLeaveDays,
   REASON_OPTIONAL_TYPES,
   MIN_REASON_LENGTH,
@@ -56,6 +57,8 @@ export default function ApplyLeave() {
   // are hidden and the request draws from it (FIFO, oldest work date first);
   // with none, the employee names the day they worked as before.
   const [compOffRemaining, setCompOffRemaining] = useState(0);
+  // Admin-set: works Saturdays, so only Friday is skipped when counting days.
+  const [worksSaturday, setWorksSaturday] = useState(false);
   const [holidayDates, setHolidayDates] = useState<string[]>([]);
   const [workingWeekendDates, setWorkingWeekendDates] = useState<string[]>([]);
   const [form, setForm] = useState({
@@ -99,6 +102,7 @@ export default function ApplyLeave() {
           )
         );
         setCompOffRemaining(balanceData.compOff?.remaining ?? 0);
+        setWorksSaturday(Boolean(balanceData.employee?.worksSaturday));
       })
       .catch(() => {});
     fetch("/api/holidays")
@@ -127,9 +131,18 @@ export default function ApplyLeave() {
           form.halfDayPeriod || undefined,
           holidayDates,
           workingWeekendDates,
-          form.leaveType as LeaveType
+          form.leaveType as LeaveType,
+          worksSaturday
         )
       : 0;
+  const isWfhType = WFH_LEAVE_TYPES.includes(form.leaveType as LeaveType);
+  const daysHint = isOffsiteAttendance
+    ? "Every day in the range counts, including Fridays, Saturdays, and holidays."
+    : isWfhType
+    ? "Holidays don't count toward days."
+    : worksSaturday
+    ? "Fridays and holidays don't count toward leave days."
+    : "Fridays, Saturdays, and holidays don't count toward leave days.";
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -384,11 +397,7 @@ export default function ApplyLeave() {
               value={computedDays}
               className="w-full border border-gray-100 bg-gray-50 rounded-xl px-3 py-2.5 text-sm"
             />
-            <p className="text-xs text-gray-400 mt-1">
-              {isOffsiteAttendance
-                ? "Every day in the range counts, including Fridays, Saturdays, and holidays."
-                : "Fridays, Saturdays, and holidays don't count toward leave days."}
-            </p>
+            <p className="text-xs text-gray-400 mt-1">{daysHint}</p>
           </div>
 
           {/* Reason */}

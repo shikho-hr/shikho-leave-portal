@@ -78,6 +78,7 @@ function rowToEmployee(row: {
   gender: string | null;
   contractType: string;
   probationAnnualLeaveApproved: boolean;
+  worksSaturday: boolean;
   lastDay: Date | null;
 }): Employee {
   return {
@@ -98,6 +99,7 @@ function rowToEmployee(row: {
     gender: (row.gender ?? "") as Gender,
     contractType: row.contractType as ContractType,
     probationAnnualLeaveApproved: row.probationAnnualLeaveApproved,
+    worksSaturday: row.worksSaturday,
     lastDay: row.lastDay ? dateToStr(row.lastDay) : "",
   };
 }
@@ -536,6 +538,22 @@ export async function getProbationAnnualLeaveApprovedEmployees(): Promise<
     },
   });
   return rows.map(rowToEmployee);
+}
+
+// Admin-only toggle for employees who work Saturdays (Team Details' "Saturday
+// Workers" tab) — only Friday is then excluded when counting their leave days.
+// Never sheet-synced (upsertEmployeesFromSheet leaves it alone). It changes
+// nothing about which leave types are offered, so only the roster cache needs
+// a refresh. Existing requests keep their stored day counts.
+export async function setWorksSaturday(
+  email: string,
+  worksSaturday: boolean
+): Promise<void> {
+  await prisma.employee.update({
+    where: { email: email.toLowerCase() },
+    data: { worksSaturday },
+  });
+  await refreshRosterCache();
 }
 
 // ── Holidays ───────────────────────────────────────────────────

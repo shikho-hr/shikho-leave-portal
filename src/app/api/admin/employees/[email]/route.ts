@@ -4,6 +4,7 @@ import {
   getEmployeeByEmail,
   updateEmployeeRole,
   setProbationAnnualLeaveApproval,
+  setWorksSaturday,
 } from "@/lib/db";
 import { isOnProbation } from "@/lib/leave-calculator";
 import { isSystemAdmin } from "@/lib/system-admin";
@@ -11,11 +12,11 @@ import { Role } from "@/lib/types";
 
 const ROLES: Role[] = ["employee", "manager", "admin"];
 
-// Admin-only employee edits — Team Details' "Role Assigner" and
-// "Probation AL Access" tabs both PATCH through here, one optional field
-// each in the body. Deliberately separate from the roster sync
-// (upsertEmployeesFromSheet in db.ts touches neither field), so this is
-// the only path that changes them.
+// Admin-only employee edits — Team Details' "Role Assigner", "Probation AL
+// Access" and "Saturday Workers" tabs all PATCH through here, one optional
+// field each in the body. Deliberately separate from the roster sync
+// (upsertEmployeesFromSheet in db.ts touches none of these fields), so this
+// is the only path that changes them.
 export async function PATCH(
   req: NextRequest,
   { params }: { params: { email: string } }
@@ -74,6 +75,25 @@ export async function PATCH(
       }
       await setProbationAnnualLeaveApproval(email, approved);
       return NextResponse.json({ email, probationAnnualLeaveApproved: approved });
+    }
+
+    if (body.worksSaturday !== undefined) {
+      if (isSystemAdmin(email)) {
+        return NextResponse.json(
+          { error: "The HR Portal system admin can't be changed." },
+          { status: 400 }
+        );
+      }
+      const employee = await getEmployeeByEmail(email);
+      if (!employee) {
+        return NextResponse.json(
+          { error: "Employee not found" },
+          { status: 404 }
+        );
+      }
+      const worksSaturday = Boolean(body.worksSaturday);
+      await setWorksSaturday(email, worksSaturday);
+      return NextResponse.json({ email, worksSaturday });
     }
 
     return NextResponse.json({ error: "Nothing to update" }, { status: 400 });

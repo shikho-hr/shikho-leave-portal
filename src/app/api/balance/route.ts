@@ -73,6 +73,7 @@ export async function GET() {
         department: employee.department,
         employeeType: employee.employeeType,
         onProbation: isOnProbation(employee, new Date()),
+        worksSaturday: employee.worksSaturday,
       },
     });
   } catch (err) {

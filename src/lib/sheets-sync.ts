@@ -241,6 +241,8 @@ export async function fetchEmployeesFromSheet(): Promise<EmployeeSyncResult> {
       // Same reasoning as role above — admin-managed only, ignored by
       // upsertEmployeesFromSheet entirely; this value is never read.
       probationAnnualLeaveApproved: false,
+      // Admin-managed only, same as above - never read by the upsert.
+      worksSaturday: false,
       lastDay: lastDay || "",
     });
   });

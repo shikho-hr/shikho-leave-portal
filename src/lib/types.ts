@@ -28,6 +28,9 @@ export interface Employee {
   // Leave while still on probation (normally blocked entirely) — see
   // leave-calculator.ts's getAvailableLeaveTypes/validateLeaveRequest.
   probationAnnualLeaveApproved: boolean;
+  // Admin-set (Team Details' "Saturday Workers" tab, never sheet-synced):
+  // works Saturdays, so only Friday is excluded when counting leave days.
+  worksSaturday: boolean;
   // Notice-period end date, sheet-synced from the "lastday" column. Empty
   // string if unset. Any date set here (not just a past one) blocks Casual
   // Leave entirely — see leave-calculator.ts's

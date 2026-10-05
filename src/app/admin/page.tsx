@@ -7,6 +7,7 @@ import Navbar from "@/components/Navbar";
 import CompanyCalendarManager from "@/components/CompanyCalendarManager";
 import RoleAssigner from "@/components/RoleAssigner";
 import ProbationAnnualLeaveAccess from "@/components/ProbationAnnualLeaveAccess";
+import SaturdayWorkersAccess from "@/components/SaturdayWorkersAccess";
 import { formatDate, formatDateRange } from "@/lib/leave-calculator";
 
 interface EmployeeWithBalance {
@@ -116,7 +117,7 @@ export default function AdminDashboard() {
   const { user, status } = useAuth();
   const router = useRouter();
   const [tab, setTab] = useState<
-    "balances" | "requests" | "calendar" | "roles" | "probationAL"
+    "balances" | "requests" | "calendar" | "roles" | "probationAL" | "saturday"
   >("balances");
   const [employees, setEmployees] = useState<EmployeeWithBalance[]>([]);
   const [allLeaves, setAllLeaves] = useState<LeaveRow[]>([]);
@@ -547,6 +548,18 @@ export default function AdminDashboard() {
               Probation AL Access
             </button>
           )}
+          {user?.role === "admin" && (
+            <button
+              onClick={() => setTab("saturday")}
+              className={`px-5 py-2 rounded-xl text-sm font-semibold transition-colors ${
+                tab === "saturday"
+                  ? "bg-indigo-600 text-white shadow-sm"
+                  : "bg-white text-gray-600 border border-gray-200 hover:border-indigo-300"
+              }`}
+            >
+              Saturday Workers
+            </button>
+          )}
         </div>
 
         {/* Balance cache status — admin only, and only balances are cached */}
@@ -681,6 +694,7 @@ export default function AdminDashboard() {
         {tab === "probationAL" && user?.role === "admin" && (
           <ProbationAnnualLeaveAccess />
         )}
+        {tab === "saturday" && user?.role === "admin" && <SaturdayWorkersAccess />}
 
         {/* Balances table */}
         {tab === "balances" && (

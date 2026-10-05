@@ -31,7 +31,11 @@ model Employee {
   // Leave while still on probation (normally blocked entirely) - never
   // sheet-synced, see upsertEmployeesFromSheet in db.ts.
   probationAnnualLeaveApproved Boolean @default(false)
-  createdAt             DateTime  @default(now())
+  // Admin-set: this employee works Saturdays, so only Friday is their weekly
+  // off-day when leave days are counted (see isExcludedDay in
+  // leave-calculator.ts). Never sheet-synced - see setWorksSaturday in db.ts.
+  worksSaturday         Boolean   @default(false)
+  createdAt            DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
 
   manager         Employee?        @relation("ManagerReportees", fields: [managerEmail], references: [email])
