@@ -842,17 +842,6 @@ export function validateLeaveRequest(
     };
   }
 
-  // Every WFH-type leave (regular WFH, Monthly WFH for Ladies, WFH -
-  // Deployment) is capped at a single calendar day per request — consecutive
-  // days are fine, they just each need their own separate request (HR
-  // policy, 2026-10-04).
-  if (WFH_LEAVE_TYPES.includes(leaveType) && requestStartDate !== requestEndDate) {
-    return {
-      valid: false,
-      error: "Work from home can only be requested for a single day at a time.",
-    };
-  }
-
   // Maternity/paternity are gated by gender
   if (leaveType === "maternity" && employee.gender !== "female") {
     return {
@@ -895,13 +884,21 @@ export function validateLeaveRequest(
     };
   }
 
-  // Monthly WFH for Ladies: female-only, once per calendar month (single-day
-  // cap is enforced generically above, for every WFH type)
+  // Monthly WFH for Ladies: female-only, one single day per calendar month.
+  // The other WFH types (WFH, WFH - Deployment) have no such limit and can be
+  // applied for a whole stretch in one request (HR policy, 2026-10-05 —
+  // reverses the every-WFH-type single-day cap of 2026-10-04).
   if (leaveType === "ladies_wfh") {
     if (employee.gender !== "female") {
       return {
         valid: false,
         error: "Monthly WFH for Ladies is only available to female employees.",
+      };
+    }
+    if (requestStartDate !== requestEndDate) {
+      return {
+        valid: false,
+        error: "Monthly WFH for Ladies can only be requested for a single day.",
       };
     }
     if (hasUsedLadiesWfhThisMonth(existingLeaves)) {
