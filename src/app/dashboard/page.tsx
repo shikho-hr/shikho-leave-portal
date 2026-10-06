@@ -436,6 +436,13 @@ export default function Dashboard() {
             >
               <p className="text-sm font-medium text-gray-500 mb-2 whitespace-nowrap">
                 {CARD_LABELS[type] || type}
+                {/* Annual's taken count is always lifetime; the other cards
+                    follow the selected year, so flag it when a year is picked. */}
+                {showTaken && type === "annual" && historyYear !== "lifetime" && (
+                  <span className="ml-1 text-xs font-normal text-gray-400">
+                    (Lifetime)
+                  </span>
+                )}
               </p>
               {/* The balance, with Compensatory Off's way in sitting beside
                   it rather than under it — every card stays the same height.
