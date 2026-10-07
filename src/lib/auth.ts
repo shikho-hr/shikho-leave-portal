@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { adminAuth } from "./firebase-admin";
 import { getEmployeeByEmail, ensureSystemAdmin } from "./db";
 import { isSystemAdmin } from "./system-admin";
+import { isSessionExpiredByPolicy } from "./session-policy";
 
 export interface CurrentUser {
   email: string;
@@ -19,6 +20,7 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
   try {
     const decoded = await adminAuth.verifySessionCookie(sessionCookie, true);
     if (!decoded.email) return null;
+    if (isSessionExpiredByPolicy(decoded.auth_time)) return null;
 
     // The HR automation account is a permanent admin — restore its row if
     // anything removed or altered it (see system-admin.ts).
