@@ -125,7 +125,7 @@ export default function Navbar() {
             {user?.email && !systemAdmin && (
               <NotificationBell currentUserEmail={user.email} />
             )}
-            <span className="text-sm text-indigo-200 hidden sm:block">
+            <span className="text-sm font-bold text-indigo-200 hidden sm:block">
               {user?.name}
             </span>
             <button
@@ -185,7 +185,7 @@ export default function Navbar() {
               </Link>
             ))}
             <div className="border-t border-white/10 mt-1 pt-2 flex items-center justify-between px-3">
-              <span className="text-sm text-indigo-200">{user?.name}</span>
+              <span className="text-sm font-bold text-indigo-200">{user?.name}</span>
               <button
                 onClick={async () => {
                   await signOutUser();

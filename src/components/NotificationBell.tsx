@@ -83,7 +83,36 @@ export default function NotificationBell({
     return () => window.removeEventListener("click", closeIt);
   }, [open]);
 
-  const unreadCount = notifications.filter((n) => !n.read).length;
+  // Facebook-style badge: opening the bell clears the count without marking
+  // anything read — the badge only counts unread notifications newer than the
+  // last time the bell was opened. Kept per browser (localStorage), so a
+  // different device shows its own count; the unread dots stay in the list.
+  const seenKey = `notifSeenAt:${currentUserEmail}`;
+  const [seenAt, setSeenAt] = useState(0);
+
+  useEffect(() => {
+    try {
+      setSeenAt(Number(localStorage.getItem(seenKey)) || 0);
+    } catch {}
+  }, [seenKey]);
+
+  // While the dropdown is open everything in it counts as seen, including
+  // anything a Refresh brings in.
+  useEffect(() => {
+    if (!open || notifications.length === 0) return;
+    const newest = Math.max(
+      ...notifications.map((n) => new Date(n.createdAt).getTime())
+    );
+    if (newest <= seenAt) return;
+    setSeenAt(newest);
+    try {
+      localStorage.setItem(seenKey, String(newest));
+    } catch {}
+  }, [open, notifications, seenAt, seenKey]);
+
+  const unreadCount = notifications.filter(
+    (n) => !n.read && new Date(n.createdAt).getTime() > seenAt
+  ).length;
   const unreadLabel = unreadCount >= 10 ? "9+" : String(unreadCount);
 
   const handleClickNotification = (n: NotificationItem) => {
