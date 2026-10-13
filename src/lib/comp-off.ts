@@ -60,7 +60,7 @@ export function datesInRange(startDate: string, endDate: string): string[] {
 // How much of each additional work date this employee has already claimed,
 // across both flows. Rejected records free their date again — same
 // convention the original overlap check used, and the same one
-// countNonRejectedLifetime() follows elsewhere.
+// sumNonRejectedLifetimeDays() follows elsewhere.
 export function workDateUsage(
   credits: Pick<CompOffCredit, "workDate" | "days" | "status">[],
   leaves: Pick<

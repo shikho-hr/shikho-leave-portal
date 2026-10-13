@@ -101,10 +101,49 @@ export const REASON_OPTIONAL_TYPES: LeaveType[] = [
 // Applies only where reason is already mandatory (i.e. not in REASON_OPTIONAL_TYPES).
 export const MIN_REASON_LENGTH = 40;
 
+// Maternity/Paternity come in allowances of MATERNITY_MAX_DAYS / PATERNITY_MAX_DAYS
+// days, and an employee gets at most this many allowances over their whole
+// employment. A request may be split any way across an allowance; the next
+// allowance is only added once the current one is fully used (HR,
+// 2026-10-13). See blockLeaveEntitlement().
 export const MATERNITY_PATERNITY_LIFETIME_CAP = 2;
 export const MARRIAGE_MAX_DAYS = 7;
 export const PATERNITY_MAX_DAYS = 14;
 export const MATERNITY_MAX_DAYS = 180;
+
+export type BlockLeaveType = "maternity" | "paternity";
+
+export function blockLeaveSize(type: BlockLeaveType): number {
+  return type === "maternity" ? MATERNITY_MAX_DAYS : PATERNITY_MAX_DAYS;
+}
+
+// Entitlement shown for Maternity/Paternity given the days already taken
+// across the employee's whole history: one allowance, plus another each time
+// the previous ones are fully used, up to MATERNITY_PATERNITY_LIFETIME_CAP.
+// E.g. Paternity: 0-13 taken -> 14, 14-27 taken -> 28 (so 14 taken leaves a
+// fresh 14), 28 taken -> 28 (nothing left).
+export function blockLeaveEntitlement(
+  type: BlockLeaveType,
+  daysTaken: number
+): number {
+  const size = blockLeaveSize(type);
+  const blocks = Math.min(
+    MATERNITY_PATERNITY_LIFETIME_CAP,
+    Math.floor(daysTaken / size) + 1
+  );
+  return blocks * size;
+}
+
+// Days of this type across every request that still counts (anything not
+// rejected, pending included, all time).
+export function sumNonRejectedLifetimeDays(
+  allLeaves: LeaveRequest[],
+  type: LeaveType
+): number {
+  return allLeaves
+    .filter((l) => l.leaveType === type && l.status !== "rejected")
+    .reduce((sum, l) => sum + l.days, 0);
+}
 export const ANNUAL_LEAVE_ACCRUAL_DIVISOR = 24.33;
 export const ANNUAL_LEAVE_LIFETIME_CAP = 60;
 
@@ -539,14 +578,6 @@ function calculateUsed(
 // slot (so multiple simultaneous pending requests can't all later be
 // approved past the limit), but a rejected request frees the slot back up.
 
-export function countNonRejectedLifetime(
-  allLeaves: LeaveRequest[],
-  type: LeaveType
-): number {
-  return allLeaves.filter((l) => l.leaveType === type && l.status !== "rejected")
-    .length;
-}
-
 export function hasUsedLadiesWfhThisMonth(
   allLeaves: LeaveRequest[],
   asOfDate: Date = new Date()
@@ -693,6 +724,20 @@ export function calculateBalance(
     entitled.ladies_wfh = 1;
     used.ladies_wfh = usedThisMonth ? 1 : 0;
   }
+
+  // Maternity/Paternity are lifetime allowances, not year-scoped: the
+  // entitlement grows by one allowance each time the previous one is fully
+  // used (see blockLeaveEntitlement), so Taken and Remaining are measured
+  // across the whole history. Only for tracks that have an allowance at all.
+  (["maternity", "paternity"] as const).forEach((type) => {
+    if (entitled[type] <= 0) return;
+    const opening = openingBalance?.[type] ?? 0;
+    const takenEver = approvedLeaves
+      .filter((l) => l.leaveType === type)
+      .reduce((sum, l) => sum + l.days, 0);
+    used[type] = takenEver;
+    entitled[type] = blockLeaveEntitlement(type, takenEver) + opening;
+  });
 
   // Compensatory Off is earned, never granted: entitlement comes entirely
   // from accepted CompOffCredit rows plus any leave that brought its own
@@ -856,18 +901,22 @@ export function validateLeaveRequest(
     };
   }
 
-  // Maternity/paternity capped at 2 uses in the whole employment tenure
-  if (
-    (leaveType === "maternity" || leaveType === "paternity") &&
-    countNonRejectedLifetime(existingLeaves, leaveType) >=
-      MATERNITY_PATERNITY_LIFETIME_CAP
-  ) {
-    return {
-      valid: false,
-      error: `${
-        leaveType === "maternity" ? "Maternity" : "Paternity"
-      } leave can only be availed ${MATERNITY_PATERNITY_LIFETIME_CAP} times during employment.`,
-    };
+  // Maternity/paternity: MATERNITY_PATERNITY_LIFETIME_CAP allowances over the
+  // whole tenure, usable in any number of requests. Once every allowance has
+  // been taken (or is pending), nothing is left to apply for.
+  if (leaveType === "maternity" || leaveType === "paternity") {
+    const size = blockLeaveSize(leaveType);
+    if (
+      sumNonRejectedLifetimeDays(existingLeaves, leaveType) >=
+      MATERNITY_PATERNITY_LIFETIME_CAP * size
+    ) {
+      return {
+        valid: false,
+        error: `${
+          leaveType === "maternity" ? "Maternity" : "Paternity"
+        } leave has been fully used (${MATERNITY_PATERNITY_LIFETIME_CAP} allowances of ${size} days during employment).`,
+      };
+    }
   }
 
   // Maternity/paternity max days per request
@@ -1023,6 +1072,34 @@ export function validateLeaveRequest(
         }, Requested: ${days}`,
       };
     }
+  } else if (
+    !skipBalanceCheck &&
+    (leaveType === "maternity" || leaveType === "paternity")
+  ) {
+    // Lifetime allowance (see blockLeaveEntitlement), identical across
+    // years, so check the request's total once — minus whatever this
+    // employee's own pending requests of the same type already hold, so two
+    // in-flight requests can't both fit into the same days.
+    const startYear = String(parseISO(requestStartDate).getFullYear());
+    const lifetimeRemaining =
+      balancesByYear[startYear]?.remaining[leaveType] ?? 0;
+    const reserved = existingLeaves
+      .filter(
+        (l) =>
+          l.leaveType === leaveType &&
+          (l.status === "pending" || l.status === "manager_approved")
+      )
+      .reduce((sum, l) => sum + l.days, 0);
+    const available = round(lifetimeRemaining - reserved);
+    if (days > available) {
+      return {
+        valid: false,
+        error: `Insufficient ${leaveType} leave balance. Available: ${Math.max(
+          available,
+          0
+        )}, Requested: ${days}`,
+      };
+    }
   } else if (!skipBalanceCheck) {
     // Per year, since a request spanning New Year's draws from two
     // separate years' balances (see daysByYear) — correct for every
@@ -1083,18 +1160,12 @@ export function getAvailableLeaveTypes(
         employee.probationAnnualLeaveApproved
       );
     }
-    if (type === "maternity") {
+    if (type === "maternity" || type === "paternity") {
+      // Offered while any of the lifetime allowances still has days left.
       return (
-        employee.gender === "female" &&
-        countNonRejectedLifetime(allLeaves, "maternity") <
-          MATERNITY_PATERNITY_LIFETIME_CAP
-      );
-    }
-    if (type === "paternity") {
-      return (
-        employee.gender === "male" &&
-        countNonRejectedLifetime(allLeaves, "paternity") <
-          MATERNITY_PATERNITY_LIFETIME_CAP
+        employee.gender === (type === "maternity" ? "female" : "male") &&
+        sumNonRejectedLifetimeDays(allLeaves, type) <
+          MATERNITY_PATERNITY_LIFETIME_CAP * blockLeaveSize(type)
       );
     }
     if (type === "ladies_wfh") {
